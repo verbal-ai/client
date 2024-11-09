@@ -7,6 +7,19 @@ import numpy as np
 import torch
 import requests
 from typing import Optional
+import logging
+
+def setup_logging():
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler()  # Only console output
+        ]
+    )
+    return logging.getLogger(__name__)
+
+logger = setup_logging()
 
 class State(enum.Enum):
     IDLE = "idle"
@@ -47,13 +60,27 @@ class AudioProcessor:
             self.audio_chunks.append(indata.copy())
         
         try:
+            # Log available audio devices
+            devices = sd.query_devices()
+            default_input = sd.query_devices(kind='input')
+            logger.info("Available audio devices:")
+            for i, device in enumerate(devices):
+                logger.info(f"Device {i}: {device['name']}")
+            logger.info(f"Using default input device: {default_input['name']}")
+            logger.info(f"Default device specs - channels: {default_input['max_input_channels']}, "
+                       f"default samplerate: {default_input['default_samplerate']}")
+
             with sd.InputStream(
                 samplerate=self.sample_rate,
                 channels=1,
                 dtype=np.float32,
                 callback=audio_callback,
                 blocksize=self.window_size_samples
-            ):
+            ) as stream:
+                logger.info(f"Stream opened - Device: {stream.device}, "
+                          f"Samplerate: {stream.samplerate}, "
+                          f"Channels: {stream.channels}")
+                
                 while self.current_state == State.LISTENING:
                     if len(self.audio_chunks) > 0:
                         current_chunk = self.audio_chunks[-1].flatten()
@@ -62,19 +89,19 @@ class AudioProcessor:
                         
                         if speech_prob >= self.speaking_threshold:
                             if not is_speaking:
-                                print("Voice detected, recording...")
+                                logger.info("Voice detected, recording...")
                                 is_speaking = True
                             silence_start = None
                         elif is_speaking:
                             if silence_start is None:
                                 silence_start = time.time()
                             elif time.time() - silence_start > self.silence_threshold:
-                                print("Processing audio...")
+                                logger.info("Processing audio...")
                                 return np.concatenate([chunk.flatten() for chunk in self.audio_chunks])
                         
                     time.sleep(0.01)
         except Exception as e:
-            print(f"Recording error: {e}")
+            logger.error(f"Recording error: {e}", exc_info=True)
             self.current_state = State.ERROR
             return None
         
