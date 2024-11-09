@@ -1,3 +1,5 @@
-mkdir my_project
 cd my_project
-python -m venv venv 
+python3 -m venv venv 
+source venv/bin/activate    
+pip install -r requirements.txt
+deactivate
