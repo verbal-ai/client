@@ -1,7 +1,7 @@
 import pyaudio
 import wave
 
-def record_audio(seconds=5, filename="output.wav"):
+def record_audio(seconds=5, file_name="output.wav"):
     # Audio recording parameters
     CHUNK = 1024
     FORMAT = pyaudio.paInt16
@@ -35,19 +35,19 @@ def record_audio(seconds=5, filename="output.wav"):
     p.terminate()
 
     # Save the recorded data as a WAV file
-    wf = wave.open(filename, 'wb')
+    wf = wave.open(file_name, 'wb')
     wf.setnchannels(CHANNELS)
     wf.setsampwidth(p.get_sample_size(FORMAT))
     wf.setframerate(RATE)
     wf.writeframes(b''.join(frames))
     wf.close()
 
-def play_audio(filename="output.wav"):
+def play_audio(file_name="output.wav"):
     # Initialize PyAudio
     p = pyaudio.PyAudio()
 
     # Open the sound file 
-    wf = wave.open(filename, 'rb')
+    wf = wave.open(file_name, 'rb')
 
     # Open stream
     stream = p.open(format=p.get_format_from_width(wf.getsampwidth()),
