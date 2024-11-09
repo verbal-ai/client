@@ -7,6 +7,7 @@ from typing import Optional, List, Dict, Any, Tuple
 import logging
 import wave
 import io
+import queue
 
 import sounddevice as sd
 import numpy as np
@@ -18,7 +19,7 @@ import requests
 SAMPLE_RATE = 16000
 VAD_WINDOW_SIZE = 512
 SPEAKING_THRESHOLD = 0.5
-SILENCE_THRESHOLD = 3.0
+SILENCE_THRESHOLD = 1
 API_ENDPOINT = "https://us-central1-dictationdaddy.cloudfunctions.net/verbalDemo"
 
 class State(enum.Enum):
@@ -247,6 +248,7 @@ class AudioProcessor:
         Replace with actual TTS implementation.
         """
         try:
+            stream_audio(text)
             self.logger.info(f"Playing response: {text}")
             time.sleep(2)  # Simulating audio playback
         except Exception as e:
@@ -295,9 +297,115 @@ class AudioProcessor:
                 self.logger.error(f"Unexpected error: {e}")
                 self.current_state = State.ERROR
 
+
+
+
+
+import requests
+import pyaudio
+import io
+import dotenv
+
+dotenv.load_dotenv()
+
+DEEPGRAM_URL = "https://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=linear16&sample_rate=48000&container=none"
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
+
+# Audio parameters (adjust based on your audio stream)
+CHUNK_SIZE = 1024
+CHANNELS = 1
+RATE = 48000
+FORMAT = pyaudio.paInt16
+
+def stream_audio(text):
+    audio_buffer = queue.Queue(maxsize=50)
+    running = threading.Event()
+    running.set()
+    min_buffers = 5
+    buffer_ready = threading.Event()
+    
+    # Calculate proper audio chunk size
+    bytes_per_sample = pyaudio.get_sample_size(FORMAT)
+    samples_per_chunk = 1024
+    AUDIO_CHUNK_SIZE = bytes_per_sample * CHANNELS * samples_per_chunk
+    
+    byte_buffer = bytearray()
+
+    def audio_player():
+        p = pyaudio.PyAudio()
+        stream = p.open(format=FORMAT,
+                       channels=CHANNELS,
+                       rate=RATE,
+                       output=True,
+                       frames_per_buffer=samples_per_chunk)
+        
+        print("Waiting for initial buffers to fill...")
+        buffer_ready.wait()
+        print("Starting playback...")
+        
+        while running.is_set() or not audio_buffer.empty():
+            try:
+                chunk = audio_buffer.get(timeout=1)
+                stream.write(chunk)
+            except queue.Empty:
+                continue
+        
+        print("Finished playing all audio")
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
+
+    player_thread = threading.Thread(target=audio_player)
+    player_thread.start()
+
+    try:
+        payload = {
+            "text": text
+        }
+        
+        headers = {
+            "Authorization": f"Token {DEEPGRAM_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        response = requests.post(DEEPGRAM_URL, headers=headers, json=payload, stream=True)
+        
+        buffer_count = 0
+        for chunk in response.iter_content():
+            if chunk:
+                byte_buffer.extend(chunk)
+                
+                while len(byte_buffer) >= AUDIO_CHUNK_SIZE:
+                    audio_chunk = bytes(byte_buffer[:AUDIO_CHUNK_SIZE])
+                    audio_buffer.put(audio_chunk)
+                    byte_buffer = byte_buffer[AUDIO_CHUNK_SIZE:]
+                    buffer_count += 1
+                    
+                    if buffer_count == min_buffers and not buffer_ready.is_set():
+                        print(f"Initial {min_buffers} buffers filled")
+                        buffer_ready.set()
+        
+        # Handle remaining bytes
+        if byte_buffer:
+            remaining_bytes = len(byte_buffer)
+            padding_needed = AUDIO_CHUNK_SIZE - remaining_bytes
+            padded_chunk = bytes(byte_buffer) + b'\x00' * padding_needed
+            audio_buffer.put(padded_chunk)
+            print(f"Added final chunk with {remaining_bytes} bytes of audio + {padding_needed} bytes of padding")
+                
+    finally:
+        running.clear()
+        player_thread.join()
+        print("Stream completed")
+
+# Run the streaming
+# stream_audio()
 def main():
     processor = AudioProcessor()
     processor.run()
 
 if __name__ == "__main__":
     main()
+
+# Run the streaming
+# stream_audio()
