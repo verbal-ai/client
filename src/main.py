@@ -2,26 +2,24 @@ import enum
 import os
 import time
 import threading
+from dataclasses import dataclass
+from typing import Optional, List, Dict, Any, Tuple
+import logging
+import wave
+import io
+
 import sounddevice as sd
 import numpy as np
 import torch
-import base64  # Add this import
+import base64
 import requests
-import json
-from typing import Optional
-import logging
 
-def setup_logging():
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler()  # Only console output
-        ]
-    )
-    return logging.getLogger(__name__)
-
-logger = setup_logging()
+# Constants
+SAMPLE_RATE = 16000
+VAD_WINDOW_SIZE = 512
+SPEAKING_THRESHOLD = 0.5
+SILENCE_THRESHOLD = 3.0
+API_ENDPOINT = "https://us-central1-dictationdaddy.cloudfunctions.net/verbalDemo"
 
 class State(enum.Enum):
     IDLE = "idle"
@@ -30,217 +28,271 @@ class State(enum.Enum):
     OUTPUT = "output"
     ERROR = "error"
 
-class AudioProcessor:
-    def __init__(self, sample_rate: int = 16000):
-        logger.info("Initializing AudioProcessor with sample rate: %d", sample_rate)
-        
-        # Load VAD model
-        model_path = os.path.join(os.path.dirname(__file__), "..", "data", "silero_vad.jit")
-        logger.debug("Loading VAD model from: %s", model_path)
-        self.model = torch.jit.load(model_path)
-        
-        # Setup device and model
-        self.sample_rate = sample_rate
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        logger.info("Using device: %s", self.device)
-        self.model.to(self.device)
-        
-        # VAD parameters
-        self.window_size_samples = 512
-        self.speaking_threshold = 0.5
-        self.silence_threshold = 3.0
-        logger.debug("VAD parameters - window_size: %d, speaking_threshold: %.2f, silence_threshold: %.2f",
-                    self.window_size_samples, self.speaking_threshold, self.silence_threshold)
-        
-        # State management
-        self.current_state = State.IDLE
-        self.audio_chunks = []
-        self.lock = threading.Lock()
-        logger.info("AudioProcessor initialization complete")
+@dataclass
+class AudioConfig:
+    sample_rate: int = SAMPLE_RATE
+    window_size: int = VAD_WINDOW_SIZE
+    speaking_threshold: float = SPEAKING_THRESHOLD
+    silence_threshold: float = SILENCE_THRESHOLD
+    channels: int = 1
+    sample_width: int = 2  # 16-bit audio
 
-    def _record_audio(self) -> Optional[np.ndarray]:
+class AudioDevice:
+    @staticmethod
+    def get_devices() -> Dict[str, Any]:
+        devices = sd.query_devices()
+        return {
+            'input': sd.query_devices(kind='input'),
+            'output': sd.query_devices(kind='output'),
+            'all': devices
+        }
+
+    @staticmethod
+    def log_devices(logger: logging.Logger) -> None:
+        devices = AudioDevice.get_devices()
+        logger.info("Available audio devices:")
+        for i, device in enumerate(devices['all']):
+            logger.info(f"Device {i}: {device['name']}")
+        logger.info(f"Default input device: {devices['input']['name']}")
+        logger.info(f"Default output device: {devices['output']['name']}")
+
+def float32_to_int16(audio_data: np.ndarray) -> np.ndarray:
+    """Convert float32 numpy array to int16."""
+    return (audio_data * 32767).astype(np.int16)
+
+def create_wav_data(audio_data: np.ndarray, config: AudioConfig) -> bytes:
+    """Convert numpy array to WAV file bytes."""
+    with io.BytesIO() as wav_buffer:
+        with wave.open(wav_buffer, 'wb') as wav_file:
+            wav_file.setnchannels(config.channels)
+            wav_file.setsampwidth(config.sample_width)
+            wav_file.setframerate(config.sample_rate)
+            wav_file.writeframes(audio_data.tobytes())
+        return wav_buffer.getvalue()
+
+class AudioProcessor:
+    def __init__(self, config: Optional[AudioConfig] = None):
+        self.logger = self._setup_logger()
+        self.config = config or AudioConfig()
+        self.logger.info(f"Initializing AudioProcessor with sample rate: {self.config.sample_rate}")
+
+        self._init_vad_model()
+        self.current_state = State.IDLE
+        self.audio_chunks: List[np.ndarray] = []
+        self.lock = threading.Lock()
+        self._audio_data: Optional[np.ndarray] = None
+
+    def _setup_logger(self) -> logging.Logger:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[logging.StreamHandler()]
+        )
+        return logging.getLogger(__name__)
+
+    def _init_vad_model(self) -> None:
+        model_path = os.path.join(os.path.dirname(__file__), "..", "data", "silero_vad.jit")
+        self.logger.debug(f"Loading VAD model from: {model_path}")
+
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.logger.info(f"Using device: {self.device}")
+
+        self.model = torch.jit.load(model_path)
+        self.model.to(self.device)
+
+    def _audio_callback(self, indata: np.ndarray, frames: int, time: Any, status: Any) -> None:
+        if status:
+            self.logger.warning(f"Status: {status}")
+        self.audio_chunks.append(indata.copy())
+
+    def _prepare_audio_for_api(self, audio_data: np.ndarray) -> Tuple[Dict[str, Any], str]:
+        """
+        Prepare audio data for API submission, returns (payload, format).
+        Tries different formats to ensure compatibility.
+        """
+        # Convert to int16 for consistent formatting
+        int16_data = float32_to_int16(audio_data)
+
+        # Create WAV format
+        wav_data = create_wav_data(int16_data, self.config)
+        wav_base64 = base64.b64encode(wav_data).decode('utf-8')
+
+        # Also prepare raw PCM format as fallback
+        pcm_base64 = base64.b64encode(int16_data.tobytes()).decode('utf-8')
+
+        # Try WAV format first
+        payload = {
+            "base64Audio": wav_base64,
+            "format": "wav",
+            "sampleRate": self.config.sample_rate,
+            "channels": self.config.channels
+        }
+
+        return payload, "wav"
+
+    def _record_audio(self) -> bool:
+        """Record audio and return True if audio was successfully captured."""
         self.audio_chunks = []
         is_speaking = False
         silence_start = None
-        
-        def audio_callback(indata, frames, time, status):
-            if status:
-                logger.warning(f"Status: {status}")
-            self.audio_chunks.append(indata.copy())
-        
+
         try:
-            # Log available audio devices
-            devices = sd.query_devices()
-            default_input = sd.query_devices(kind='input')
-            logger.info("Available audio devices:")
-            for i, device in enumerate(devices):
-                logger.info(f"Device {i}: {device['name']}")
-            logger.info(f"Using default input device: {default_input['name']}")
-            logger.info(f"Default device specs - channels: {default_input['max_input_channels']}, "
-                       f"default samplerate: {default_input['default_samplerate']}")
+            AudioDevice.log_devices(self.logger)
 
             with sd.InputStream(
-                samplerate=self.sample_rate,
-                channels=1,
+                samplerate=self.config.sample_rate,
+                channels=self.config.channels,
                 dtype=np.float32,
-                callback=audio_callback,
-                blocksize=self.window_size_samples
+                callback=self._audio_callback,
+                blocksize=self.config.window_size
             ) as stream:
-                logger.info(f"Stream opened - Device: {stream.device}, "
-                          f"Samplerate: {stream.samplerate}, "
-                          f"Channels: {stream.channels}")
-                
+                self.logger.info(f"Stream opened - Device: {stream.device}, "
+                               f"Samplerate: {stream.samplerate}, "
+                               f"Channels: {stream.channels}")
+
                 while self.current_state == State.LISTENING:
-                    if len(self.audio_chunks) > 0:
-                        current_chunk = self.audio_chunks[-1].flatten()
-                        tensor = torch.from_numpy(current_chunk).to(self.device)
-                        speech_prob = self.model(tensor, self.sample_rate).item()
-                        # logger.debug(f"Speech probability: {speech_prob}")
-                        
-                        if speech_prob >= self.speaking_threshold:
-                            if not is_speaking:
-                                logger.info("Voice detected, recording...")
-                                is_speaking = True
-                            silence_start = None
-                        elif is_speaking:
-                            if silence_start is None:
-                                silence_start = time.time()
-                            elif time.time() - silence_start > self.silence_threshold:
-                                logger.info("Processing audio...")
-                                return np.concatenate([chunk.flatten() for chunk in self.audio_chunks])
-                        
+                    if len(self.audio_chunks) == 0:
+                        time.sleep(0.01)
+                        continue
+
+                    current_chunk = self.audio_chunks[-1].flatten()
+                    tensor = torch.from_numpy(current_chunk).to(self.device)
+                    speech_prob = self.model(tensor, self.config.sample_rate).item()
+
+                    if speech_prob >= self.config.speaking_threshold:
+                        if not is_speaking:
+                            self.logger.info("Voice detected, recording...")
+                            is_speaking = True
+                        silence_start = None
+                    elif is_speaking:
+                        if silence_start is None:
+                            silence_start = time.time()
+                        elif time.time() - silence_start > self.config.silence_threshold:
+                            self.logger.info("Processing audio...")
+                            self._audio_data = np.concatenate([chunk.flatten() for chunk in self.audio_chunks])
+                            return True
+
                     time.sleep(0.01)
+
         except Exception as e:
-            logger.error(f"Recording error: {e}", exc_info=True)
+            self.logger.error(f"Recording error: {e}", exc_info=True)
             self.current_state = State.ERROR
+            return False
+
+        return False
+
+    def process_audio(self) -> Optional[str]:
+        """
+        Process the recorded audio data and return the response text.
+        """
+        if self._audio_data is None:
+            self.logger.error("No audio data available for processing")
             return None
-        
-        return None
-    
-    def get_output_device(self):
-        """Get the default audio output device"""
+
         try:
-            devices = sd.query_devices()
-            default_output = sd.query_devices(kind='output')
-            logger.info("Available output devices:")
-            for i, device in enumerate(devices):
-                if device['max_output_channels'] > 0:
-                    logger.info(f"Device {i}: {device['name']}")
-            logger.info(f"Using default output device: {default_output['name']}")
-            logger.info(f"Default output specs - channels: {default_output['max_output_channels']}, "
-                       f"default samplerate: {default_output['default_samplerate']}")
-            return default_output
-        except Exception as e:
-            logger.error(f"Error getting output device: {e}", exc_info=True)
-            return None
-        
-    
-    def play_audio(self,audio_data: np.ndarray):
-        """Play audio response"""
-        try:
-            sd = self.get_output_device()
-            sd.play(audio_data, self.sample_rate)
-        except Exception as e:
-            logger.error(f"Playback error: {e}")
-            self.current_state = State.ERROR
+            self.logger.info(f"Preparing audio data for API (length: {len(self._audio_data)} samples)")
 
-    def process_audio(self, audio_data: np.ndarray):
-        """Send audio to API and get response"""
-        try:
-            logger.info("Sending audio data to API (length: %d samples)", len(audio_data))
-            
-            headers = {
-                'content-type': 'application/json'
-            }
-            
-            # Convert to raw binary data
-            raw_audio = audio_data.tobytes()
-            
-            with open('debug_output.txt', 'w') as f:
-                f.write(f"Sending data: {json.dumps({
-                    'base64Audio': base64.b64encode(raw_audio).decode('utf-8')
-                })}")
+            payload, audio_format = self._prepare_audio_for_api(self._audio_data)
+            self.logger.debug(f"Sending audio in {audio_format} format")
 
-            logger.debug("Wrote debug data to debug_output.txt")
-
-
-            self.play_audio(raw_audio)
-
-            response = requests.request(
-                "POST",
-                "https://us-central1-dictationdaddy.cloudfunctions.net/verbalDemo",
-                data=json.dumps({
-                    "base64Audio": base64.b64encode(raw_audio).decode('utf-8')
-                }),
-                headers=headers
+            response = requests.post(
+                API_ENDPOINT,
+                json=payload,
+                headers={
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                timeout=30
             )
-            
-            logger.debug(f"API Response status: {response.status_code}")
-            logger.debug(f"API Response content: {response.text}")
-            
-            json_response = response.json()
-            logger.debug(f"Parsed JSON response: {json_response}")
-            
-            if 'text' not in json_response:
-                logger.error(f"Expected 'text' key in response but got keys: {json_response.keys()}")
+
+            self.logger.debug(f"API Response status: {response.status_code}")
+            self.logger.debug(f"API Response headers: {dict(response.headers)}")
+
+            if response.status_code != 200:
+                self.logger.error(f"API error response: {response.text}")
+                try:
+                    error_data = response.json()
+                    self.logger.error(f"API error details: {error_data}")
+                except:
+                    self.logger.error(f"Raw API error response: {response.text}")
                 return None
-                
-            return json_response["text"]
+
+            try:
+                response_data = response.json()
+                self.logger.debug(f"API Response data: {response_data}")
+
+                if 'text' not in response_data:
+                    self.logger.error(f"Expected 'text' key in response but got keys: {response_data.keys()}")
+                    return None
+
+                return response_data["text"]
+
+            except requests.exceptions.JSONDecodeError as e:
+                self.logger.error(f"Failed to parse API response as JSON: {e}")
+                self.logger.error(f"Raw response content: {response.text}")
+                return None
+
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"API request failed: {e}")
+            self.current_state = State.ERROR
+            return None
         except Exception as e:
-            logger.error(f"API error: {e}", exc_info=True)
+            self.logger.error(f"Unexpected error in process_audio: {e}", exc_info=True)
             self.current_state = State.ERROR
             return None
 
-    def play_audio(self, text: str):
-        """Play audio response"""
+    def play_audio(self, text: str) -> None:
+        """
+        Placeholder for text-to-speech implementation.
+        Replace with actual TTS implementation.
+        """
         try:
-            # TODO: Replace with your text-to-speech implementation
-            print(f"Playing response: {text}")
-            # Simulating audio playback
-            time.sleep(2)
+            self.logger.info(f"Playing response: {text}")
+            time.sleep(2)  # Simulating audio playback
         except Exception as e:
-            print(f"Playback error: {e}")
+            self.logger.error(f"Playback error: {e}")
             self.current_state = State.ERROR
 
-    def run(self):
-        print("Starting audio processor...")
-        
+    def run(self) -> None:
+        self.logger.info("Starting audio processor...")
+
         while True:
             try:
                 with self.lock:
-                    if self.current_state == State.IDLE:
-                        print("Ready to listen...")
-                        self.current_state = State.LISTENING
-                    
-                    elif self.current_state == State.LISTENING:
-                        audio_data = self._record_audio()
-                        if audio_data is not None:
-                            self.current_state = State.THINKING
-                    
-                    elif self.current_state == State.THINKING:
-                        print("Processing your input...")
-                        response = self.process_audio(audio_data)
-                        if response:
-                            self.current_state = State.OUTPUT
-                        else:
-                            self.current_state = State.ERROR
-                    
-                    elif self.current_state == State.OUTPUT:
-                        self.play_audio(response)
-                        self.current_state = State.IDLE
-                    
-                    elif self.current_state == State.ERROR:
-                        print("An error occurred. Resetting...")
-                        time.sleep(2)
-                        self.current_state = State.IDLE
-                
+                    match self.current_state:
+                        case State.IDLE:
+                            self.logger.info("Ready to listen...")
+                            self.current_state = State.LISTENING
+
+                        case State.LISTENING:
+                            if self._record_audio():
+                                self.current_state = State.THINKING
+
+                        case State.THINKING:
+                            self.logger.info("Processing your input...")
+                            if response := self.process_audio():
+                                self.current_state = State.OUTPUT
+                            else:
+                                self.current_state = State.ERROR
+
+                        case State.OUTPUT:
+                            self.play_audio(response)
+                            self._audio_data = None  # Clear the audio data
+                            self.current_state = State.IDLE
+
+                        case State.ERROR:
+                            self.logger.error("An error occurred. Resetting...")
+                            self._audio_data = None  # Clear the audio data
+                            time.sleep(2)
+                            self.current_state = State.IDLE
+
                 time.sleep(0.1)  # Prevent CPU overuse
-                
+
             except KeyboardInterrupt:
-                print("\nStopping audio processor...")
+                self.logger.info("\nStopping audio processor...")
                 break
             except Exception as e:
-                print(f"Unexpected error: {e}")
+                self.logger.error(f"Unexpected error: {e}")
                 self.current_state = State.ERROR
 
 def main():
@@ -248,4 +300,4 @@ def main():
     processor.run()
 
 if __name__ == "__main__":
-    main() 
+    main()
