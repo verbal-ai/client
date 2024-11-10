@@ -337,6 +337,7 @@ def stream_audio(text):
                        channels=CHANNELS,
                        rate=RATE,
                        output=True,
+                       output_device_index=0, # Specify the headphone device
                        frames_per_buffer=samples_per_chunk)
         
         print("Waiting for initial buffers to fill...")
