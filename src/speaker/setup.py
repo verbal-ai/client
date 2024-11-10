@@ -1,13 +1,10 @@
-import pyaudio
 import wave
 import time
-import sys
 import RPi.GPIO as GPIO
 
 speaker_pin = 18
 chunk = 1024
-p = pyaudio.PyAudio()
-pwm = GPIO.PWM(speaker_pin, 440)
+default_frequency = 440
 
 
 def setup_speaker():
@@ -17,6 +14,7 @@ def setup_speaker():
 
 
 def play_file(file_name):
+    pwm = GPIO.PWM(speaker_pin, 440)
     try:
         wf = wave.open(file_name, 'rb')
 
@@ -59,15 +57,11 @@ def play_file(file_name):
         print("Error: Invalid or corrupted WAV file")
     except Exception as e:
         print(f"Error occurred: {str(e)}")
-
-
-def cleanup():
-    pwm.stop()
-    GPIO.cleanup()
+    finally:
+        pwm.stop()
+        GPIO.cleanup()
 
 
 if __name__ == "__main__":
-    try:
-        play_file("../output.wav")
-    finally:
-        cleanup()
+    setup_speaker()
+    play_file("../output.wav")
