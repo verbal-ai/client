@@ -233,7 +233,7 @@ class AudioProcessor:
                 global history
                 history = response_data["history"]
 
-                if 'text' not in response_data:
+                if 'response' not in response_data:
                     self.logger.error(f"Expected 'text' key in response but got keys: {response_data.keys()}")
                     return None
 
