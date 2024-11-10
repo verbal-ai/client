@@ -1,14 +1,15 @@
+from dataclasses import dataclass
+from typing import Optional, List, Dict, Any, Tuple
+from led.setup import green_pin, red_pin, setup_leds
+from led.functions import turn_on_pin, turn_off_pin
 import enum
 import os
 import time
 import threading
-from dataclasses import dataclass
-from typing import Optional, List, Dict, Any, Tuple
 import logging
 import wave
 import io
 import queue
-
 import sounddevice as sd
 import numpy as np
 import torch
@@ -138,6 +139,7 @@ class AudioProcessor:
         silence_start = None
 
         try:
+            turn_on_pin(green_pin)
             AudioDevice.log_devices(self.logger)
 
             with sd.InputStream(
@@ -180,6 +182,9 @@ class AudioProcessor:
             self.current_state = State.ERROR
             return False
 
+        finally:
+            turn_off_pin(green_pin)
+
         return False
 
     def process_audio(self) -> Optional[str]:
@@ -191,6 +196,7 @@ class AudioProcessor:
             return None
 
         try:
+            turn_on_pin(red_pin)
             self.logger.info(f"Preparing audio data for API (length: {len(self._audio_data)} samples)")
 
             payload, audio_format = self._prepare_audio_for_api(self._audio_data)
@@ -242,18 +248,24 @@ class AudioProcessor:
             self.current_state = State.ERROR
             return None
 
+        finally:
+            turn_off_pin(red_pin)
+
     def play_audio(self, text: str) -> None:
         """
         Placeholder for text-to-speech implementation.
         Replace with actual TTS implementation.
         """
         try:
+            turn_on_pin(red_pin)
             stream_audio(text)
             self.logger.info(f"Playing response: {text}")
             time.sleep(2)  # Simulating audio playback
         except Exception as e:
             self.logger.error(f"Playback error: {e}")
             self.current_state = State.ERROR
+        finally:
+            turn_off_pin(red_pin)
 
     def run(self) -> None:
         self.logger.info("Starting audio processor...")
@@ -393,20 +405,18 @@ def stream_audio(text):
             padded_chunk = bytes(byte_buffer) + b'\x00' * padding_needed
             audio_buffer.put(padded_chunk)
             print(f"Added final chunk with {remaining_bytes} bytes of audio + {padding_needed} bytes of padding")
-                
+
     finally:
         running.clear()
         player_thread.join()
         print("Stream completed")
 
-# Run the streaming
-# stream_audio()
+
 def main():
+    setup_leds()
     processor = AudioProcessor()
     processor.run()
 
+
 if __name__ == "__main__":
     main()
-
-# Run the streaming
-# stream_audio()
