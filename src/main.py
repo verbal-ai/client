@@ -72,6 +72,8 @@ def create_wav_data(audio_data: np.ndarray, config: AudioConfig) -> bytes:
             wav_file.writeframes(audio_data.tobytes())
         return wav_buffer.getvalue()
 
+
+history = []
 class AudioProcessor:
     def __init__(self, config: Optional[AudioConfig] = None):
         self.logger = self._setup_logger()
@@ -125,6 +127,7 @@ class AudioProcessor:
         # Try WAV format first
         payload = {
             "base64Audio": wav_base64,
+            "history": history,
             "format": "wav",
             "sampleRate": self.config.sample_rate,
             "channels": self.config.channels
@@ -216,23 +219,25 @@ class AudioProcessor:
             self.logger.debug(f"API Response headers: {dict(response.headers)}")
 
             if response.status_code != 200:
-                self.logger.error(f"API error response: {response.text}")
+                self.logger.error(f"API error response: {response.response}")
                 try:
                     error_data = response.json()
                     self.logger.error(f"API error details: {error_data}")
                 except:
-                    self.logger.error(f"Raw API error response: {response.text}")
+                    self.logger.error(f"Raw API error response: {response.response}")
                 return None
 
             try:
                 response_data = response.json()
                 self.logger.debug(f"API Response data: {response_data}")
+                global history
+                history = response_data["history"]
 
                 if 'text' not in response_data:
                     self.logger.error(f"Expected 'text' key in response but got keys: {response_data.keys()}")
                     return None
 
-                return response_data["text"]
+                return response_data["response"]
 
             except requests.exceptions.JSONDecodeError as e:
                 self.logger.error(f"Failed to parse API response as JSON: {e}")
