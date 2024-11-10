@@ -409,3 +409,24 @@ if __name__ == "__main__":
 
 # Run the streaming
 # stream_audio()
+
+def get_audio_devices():
+    p = pyaudio.PyAudio()
+    info = []
+    print("\nAvailable Audio Devices:")
+    for i in range(p.get_device_count()):
+        dev_info = p.get_device_info_by_index(i)
+        info.append(dev_info)
+        print(f"Device {i}: {dev_info['name']}")
+    p.terminate()
+    return info
+
+def find_audio_jack_device():
+    devices = get_audio_devices()
+    # Look for common audio jack names
+    keywords = ['headphone', 'analog', '3.5mm', 'bcm2835 audio', 'jack']
+    for device in devices:
+        name = device['name'].lower()
+        if any(keyword in name for keyword in keywords):
+            return device['index']
+    return None
