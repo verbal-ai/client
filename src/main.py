@@ -251,8 +251,6 @@ class AudioProcessor:
                         elif time.time() - silence_start > self.config.silence_threshold:
                             self.logger.info("Processing audio...")
                             self._audio_data = np.concatenate([chunk.flatten() for chunk in self.audio_chunks])
-                            print(time.time())
-                            print(self.last_utterance)
                             if time.time() - self.last_utterance < self.config.awake_threshold:
                                 return True
                             elif contains_wake_word(self._audio_data):
@@ -441,7 +439,7 @@ def stream_audio(text):
                        channels=CHANNELS,
                        rate=RATE,
                        output=True,
-                       # output_device_index=0, # Specify the headphone device
+                       output_device_index=0, # Specify the headphone device
                        frames_per_buffer=samples_per_chunk)
         
         print("Waiting for initial buffers to fill...")
