@@ -156,7 +156,7 @@ class AudioProcessor:
 
         self._init_vad_model()
         self.current_state = State.IDLE
-        self.last_utterance = time.time()
+        self.last_utterance = time.time() - AWAKE_THRESHOLD
         self.audio_chunks: List[np.ndarray] = []
         self.lock = threading.Lock()
         self._audio_data: Optional[np.ndarray] = None
