@@ -2,8 +2,8 @@ from dataclasses import dataclass
 from scipy.io.wavfile import write
 from typing import Optional, List, Dict, Any, Tuple
 from Levenshtein import distance
-# from led.setup import green_pin, red_pin, setup_leds
-# from led.functions import turn_on_pin, turn_off_pin
+from led.setup import green_pin, red_pin, setup_leds
+from led.functions import turn_on_pin, turn_off_pin
 import enum
 import os
 import time
@@ -217,7 +217,7 @@ class AudioProcessor:
         silence_start = None
 
         try:
-            # turn_on_pin(green_pin)
+            turn_on_pin(green_pin)
             AudioDevice.log_devices(self.logger)
 
             with sd.InputStream(
@@ -269,7 +269,7 @@ class AudioProcessor:
 
         finally:
             print("Turning off green pin")
-            # turn_off_pin(green_pin)
+            turn_off_pin(green_pin)
 
         return False
 
@@ -282,7 +282,7 @@ class AudioProcessor:
             return None
 
         try:
-            # turn_on_pin(red_pin)
+            turn_on_pin(red_pin)
             self.logger.info(f"Preparing audio data for API (length: {len(self._audio_data)} samples)")
 
             payload, audio_format = self._prepare_audio_for_api(self._audio_data)
@@ -339,7 +339,7 @@ class AudioProcessor:
         finally:
             self.last_utterance = time.time()
             print("Turning off red pin")
-            # turn_off_pin(red_pin)
+            turn_off_pin(red_pin)
 
     def play_audio(self, text: str) -> None:
         """
@@ -347,7 +347,7 @@ class AudioProcessor:
         Replace with actual TTS implementation.
         """
         try:
-            # turn_on_pin(red_pin)
+            turn_on_pin(red_pin)
             stream_audio(text)
             self.logger.info(f"Playing response: {text}")
             time.sleep(2)  # Simulating audio playback
@@ -356,7 +356,7 @@ class AudioProcessor:
             self.current_state = State.ERROR
         finally:
             print("Turning off red pin")
-            # turn_off_pin(red_pin)
+            turn_off_pin(red_pin)
 
     def run(self) -> None:
         self.logger.info("Starting audio processor...")
@@ -505,7 +505,7 @@ def stream_audio(text):
 
 
 def main():
-    # setup_leds()
+    setup_leds()
     processor = AudioProcessor()
     processor.run()
 
