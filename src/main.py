@@ -1,7 +1,8 @@
 from dataclasses import dataclass
+from scipy.io.wavfile import write
 from typing import Optional, List, Dict, Any, Tuple
-from led.setup import green_pin, red_pin, setup_leds
-from led.functions import turn_on_pin, turn_off_pin
+# from led.setup import green_pin, red_pin, setup_leds
+# from led.functions import turn_on_pin, turn_off_pin
 import enum
 import os
 import time
@@ -15,6 +16,7 @@ import numpy as np
 import torch
 import base64
 import requests
+import subprocess
 
 # Constants
 SAMPLE_RATE = 16000
@@ -23,6 +25,7 @@ SPEAKING_THRESHOLD = 0.5
 SILENCE_THRESHOLD = 1
 API_ENDPOINT = "https://us-central1-dictationdaddy.cloudfunctions.net/verbalDemo"
 
+
 class State(enum.Enum):
     IDLE = "idle"
     LISTENING = "listening"
@@ -30,8 +33,12 @@ class State(enum.Enum):
     OUTPUT = "output"
     ERROR = "error"
 
+
 @dataclass
 class AudioConfig:
+    def __init__(self):
+        pass
+
     sample_rate: int = SAMPLE_RATE
     window_size: int = VAD_WINDOW_SIZE
     speaking_threshold: float = SPEAKING_THRESHOLD
@@ -39,7 +46,11 @@ class AudioConfig:
     channels: int = 1
     sample_width: int = 2  # 16-bit audio
 
+
 class AudioDevice:
+    def __init__(self):
+        pass
+
     @staticmethod
     def get_devices() -> Dict[str, Any]:
         devices = sd.query_devices()
@@ -58,9 +69,11 @@ class AudioDevice:
         logger.info(f"Default input device: {devices['input']['name']}")
         logger.info(f"Default output device: {devices['output']['name']}")
 
+
 def float32_to_int16(audio_data: np.ndarray) -> np.ndarray:
     """Convert float32 numpy array to int16."""
     return (audio_data * 32767).astype(np.int16)
+
 
 def create_wav_data(audio_data: np.ndarray, config: AudioConfig) -> bytes:
     """Convert numpy array to WAV file bytes."""
@@ -73,7 +86,37 @@ def create_wav_data(audio_data: np.ndarray, config: AudioConfig) -> bytes:
         return wav_buffer.getvalue()
 
 
+def create_wav_file(int16_data):
+    with wave.open('output_file.wav', 'wb') as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(16000)
+        wav_file.writeframes(int16_data.tobytes())
+
+
+def transcribe_audio_locally(model_path, audio_file):
+    result = subprocess.run(
+        ['../modules/whisper.cpp/main', '-m', model_path, '-f', audio_file],
+        capture_output=True,
+        text=True
+    )
+    return result.stdout
+
+
+def contains_wake_word(audio_data):
+    int16_data = float32_to_int16(audio_data)
+    create_wav_file(int16_data)
+    print("Entering child method")
+    model_path = "../modules/whisper.cpp/models/ggml-base.en.bin"
+    file_path = "./output_file.wav"
+    stt = transcribe_audio_locally(model_path, file_path)
+    print(f"Output: {stt}")
+    return True
+
+
 history = []
+
+
 class AudioProcessor:
     def __init__(self, config: Optional[AudioConfig] = None):
         self.logger = self._setup_logger()
@@ -142,7 +185,7 @@ class AudioProcessor:
         silence_start = None
 
         try:
-            turn_on_pin(green_pin)
+            # turn_on_pin(green_pin)
             AudioDevice.log_devices(self.logger)
 
             with sd.InputStream(
@@ -176,7 +219,12 @@ class AudioProcessor:
                         elif time.time() - silence_start > self.config.silence_threshold:
                             self.logger.info("Processing audio...")
                             self._audio_data = np.concatenate([chunk.flatten() for chunk in self.audio_chunks])
-                            return True
+                            if contains_wake_word(self._audio_data):
+                                print("Contains wake word")
+                                return True
+                            else:
+                                print("Doesn't contain wake word")
+                                return False
 
                     time.sleep(0.01)
 
@@ -186,7 +234,8 @@ class AudioProcessor:
             return False
 
         finally:
-            turn_off_pin(green_pin)
+            print("Turning off green pin")
+            # turn_off_pin(green_pin)
 
         return False
 
@@ -199,7 +248,7 @@ class AudioProcessor:
             return None
 
         try:
-            turn_on_pin(red_pin)
+            # turn_on_pin(red_pin)
             self.logger.info(f"Preparing audio data for API (length: {len(self._audio_data)} samples)")
 
             payload, audio_format = self._prepare_audio_for_api(self._audio_data)
@@ -254,7 +303,8 @@ class AudioProcessor:
             return None
 
         finally:
-            turn_off_pin(red_pin)
+            print("Turning off red pin")
+            # turn_off_pin(red_pin)
 
     def play_audio(self, text: str) -> None:
         """
@@ -262,7 +312,7 @@ class AudioProcessor:
         Replace with actual TTS implementation.
         """
         try:
-            turn_on_pin(red_pin)
+            # turn_on_pin(red_pin)
             stream_audio(text)
             self.logger.info(f"Playing response: {text}")
             time.sleep(2)  # Simulating audio playback
@@ -270,7 +320,8 @@ class AudioProcessor:
             self.logger.error(f"Playback error: {e}")
             self.current_state = State.ERROR
         finally:
-            turn_off_pin(red_pin)
+            print("Turning off red pin")
+            # turn_off_pin(red_pin)
 
     def run(self) -> None:
         self.logger.info("Starting audio processor...")
@@ -334,6 +385,7 @@ CHANNELS = 1
 RATE = 48000
 FORMAT = pyaudio.paInt16
 
+
 def stream_audio(text):
     audio_buffer = queue.Queue(maxsize=50)
     running = threading.Event()
@@ -354,7 +406,7 @@ def stream_audio(text):
                        channels=CHANNELS,
                        rate=RATE,
                        output=True,
-                       output_device_index=0, # Specify the headphone device
+                       # output_device_index=0, # Specify the headphone device
                        frames_per_buffer=samples_per_chunk)
         
         print("Waiting for initial buffers to fill...")
@@ -418,7 +470,7 @@ def stream_audio(text):
 
 
 def main():
-    setup_leds()
+    # setup_leds()
     processor = AudioProcessor()
     processor.run()
 
