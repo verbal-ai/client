@@ -56,3 +56,4 @@ typing_extensions==4.12.2
 urllib3==2.2.3
 websockets==14.0
 yarl==1.17.1
+Levenshtein==0.26.1
