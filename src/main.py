@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from scipy.io.wavfile import write
 from typing import Optional, List, Dict, Any, Tuple
+from Levenshtein import distance
 # from led.setup import green_pin, red_pin, setup_leds
 # from led.functions import turn_on_pin, turn_off_pin
 import enum
@@ -11,6 +12,7 @@ import logging
 import wave
 import io
 import queue
+import re
 import sounddevice as sd
 import numpy as np
 import torch
@@ -23,6 +25,9 @@ SAMPLE_RATE = 16000
 VAD_WINDOW_SIZE = 512
 SPEAKING_THRESHOLD = 0.5
 SILENCE_THRESHOLD = 1
+AWAKE_THRESHOLD = 15
+WAKE_WORD = "hey"
+WAKE_WORD_SIMILARITY_THRESHOLD = 0.9
 API_ENDPOINT = "https://us-central1-dictationdaddy.cloudfunctions.net/verbalDemo"
 
 
@@ -43,6 +48,7 @@ class AudioConfig:
     window_size: int = VAD_WINDOW_SIZE
     speaking_threshold: float = SPEAKING_THRESHOLD
     silence_threshold: float = SILENCE_THRESHOLD
+    awake_threshold: float = AWAKE_THRESHOLD
     channels: int = 1
     sample_width: int = 2  # 16-bit audio
 
@@ -103,15 +109,40 @@ def transcribe_audio_locally(model_path, audio_file):
     return result.stdout
 
 
+def normalize_text(text: str) -> str:
+    """Normalize text by converting to lowercase and removing punctuation."""
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', '', text)
+    return text.strip()
+
+
+def get_word_similarity(word1: str, word2: str) -> float:
+    max_len = max(len(word1), len(word2))
+    if max_len == 0:
+        return 0
+    return 1 - (distance(word1, word2) / max_len)
+
+
 def contains_wake_word(audio_data):
     int16_data = float32_to_int16(audio_data)
     create_wav_file(int16_data)
-    print("Entering child method")
+
     model_path = "../modules/whisper.cpp/models/ggml-base.en.bin"
     file_path = "./output_file.wav"
     stt = transcribe_audio_locally(model_path, file_path)
-    print(f"Output: {stt}")
-    return True
+
+    normalized_text = normalize_text(stt)
+    words = normalized_text.split()
+
+    for word in words:
+        similarity = get_word_similarity(word, WAKE_WORD)
+        if similarity >= WAKE_WORD_SIMILARITY_THRESHOLD:
+            print(f"Wake word detected! Word: '{word}', matched with {WAKE_WORD} "
+                  f"(similarity: {similarity:.2f})")
+            return True
+
+    print(f"No wake word detected in text: '{normalized_text}'")
+    return False
 
 
 history = []
@@ -125,6 +156,7 @@ class AudioProcessor:
 
         self._init_vad_model()
         self.current_state = State.IDLE
+        self.last_utterance = time.time()
         self.audio_chunks: List[np.ndarray] = []
         self.lock = threading.Lock()
         self._audio_data: Optional[np.ndarray] = None
@@ -219,11 +251,13 @@ class AudioProcessor:
                         elif time.time() - silence_start > self.config.silence_threshold:
                             self.logger.info("Processing audio...")
                             self._audio_data = np.concatenate([chunk.flatten() for chunk in self.audio_chunks])
-                            if contains_wake_word(self._audio_data):
-                                print("Contains wake word")
+                            print(time.time())
+                            print(self.last_utterance)
+                            if time.time() - self.last_utterance < self.config.awake_threshold:
+                                return True
+                            elif contains_wake_word(self._audio_data):
                                 return True
                             else:
-                                print("Doesn't contain wake word")
                                 return False
 
                     time.sleep(0.01)
@@ -303,6 +337,7 @@ class AudioProcessor:
             return None
 
         finally:
+            self.last_utterance = time.time()
             print("Turning off red pin")
             # turn_off_pin(red_pin)
 
