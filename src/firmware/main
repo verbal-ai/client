@@ -1,0 +1,162 @@
+import json
+import time
+import subprocess
+import os
+
+# Run the command with sudo
+# sudo apt-get install dhcpcd5
+# sudo systemctl enable dhcpcd
+# sudo systemctl start dhcpcd
+
+
+def load_wifi_config():
+    try:
+        # Get the directory where the script is located
+        config_path = os.path.join(os.getcwd(), 'wifi.json')
+        
+        print(f"Attempting to load config from: {config_path}")  # Debug line
+        
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+            # Validate the config structure
+            if not config.get('ap_config') or not config.get('known_networks'):
+                print("Invalid config structure in wifi.json")
+                return None
+            return config
+    except FileNotFoundError:
+        print(f"wifi.json not found at {config_path}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"Invalid JSON in wifi.json: {e}")
+        return None
+    except Exception as e:
+        print(f"Unexpected error loading wifi.json: {e}")
+        return None
+
+def check_required_packages():
+    required_packages = ['wireless-tools', 'wpasupplicant']
+    missing_packages = []
+    
+    try:
+        # First check which packages are missing
+        for package in required_packages:
+            result = subprocess.run(['dpkg', '-s', package], 
+                                  capture_output=True, 
+                                  text=True)
+            if result.returncode != 0:
+                missing_packages.append(package)
+        
+        # Only update and install if there are missing packages
+        if missing_packages:
+            print(f"Missing packages: {missing_packages}")
+            print("Updating package list...")
+            subprocess.run(['sudo', 'apt-get', 'update'], check=True)
+            
+            for package in missing_packages:
+                print(f"Installing {package}...")
+                subprocess.run(['sudo', 'apt-get', 'install', '-y', package], check=True)
+        
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to install required packages: {e}")
+        return False
+
+def check_wifi_interface():
+    try:
+        # Check if wlan0 exists
+        result = subprocess.run(['ip', 'link', 'show', 'wlan0'], capture_output=True, text=True)
+        if result.returncode != 0:
+            print("WiFi interface wlan0 not found!")
+            return False
+            
+        # Ensure WiFi is not blocked
+        subprocess.run(['sudo', 'rfkill', 'unblock', 'wifi'], check=False)
+        
+        # Bring interface up
+        subprocess.run(['sudo', 'ip', 'link', 'set', 'wlan0', 'up'], check=True)
+        time.sleep(2)  # Give interface time to come up
+        
+        return True
+    except Exception as e:
+        print(f"Error checking WiFi interface: {e}")
+        return False
+
+def connect_wifi():
+    if not check_required_packages():
+        return False
+        
+    if not check_wifi_interface():
+        return False
+    
+    wifi_config = load_wifi_config()
+    if not wifi_config:
+        return False
+    
+    try:
+        print("Disconnecting from any existing networks...")
+        subprocess.run(['sudo', 'killall', 'wpa_supplicant'], check=False)
+        time.sleep(1)
+        
+        for net in wifi_config['known_networks']:
+            print(f"\nTrying to connect to {net['ssid']}")
+            
+            # Create network configuration
+            network_config = (
+                'ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\n'
+                'update_config=1\n'
+                'country=US\n\n'
+                f'network={{\n'
+                f'    ssid="{net["ssid"]}"\n'
+                f'    psk="{net["password"]}"\n'
+                f'    key_mgmt=WPA-PSK\n'
+                f'}}\n'
+            )
+            
+            # Write configuration
+            with open('/etc/wpa_supplicant/wpa_supplicant.conf', 'w') as f:
+                f.write(network_config)
+            
+            # Set proper permissions
+            subprocess.run(['sudo', 'chmod', '600', '/etc/wpa_supplicant/wpa_supplicant.conf'])
+            
+            # Stop existing wpa_supplicant
+            subprocess.run(['sudo', 'systemctl', 'stop', 'wpa_supplicant'], check=False)
+            time.sleep(1)
+            
+            # Start wpa_supplicant manually with the correct interface
+            subprocess.run([
+                'sudo', 
+                'wpa_supplicant',
+                '-B',  # Run in background
+                '-i', 'wlan0',  # Interface name
+                '-c', '/etc/wpa_supplicant/wpa_supplicant.conf'  # Config file
+            ], check=False)
+            
+            # Wait a moment for wpa_supplicant to start
+            time.sleep(2)
+            
+            # Start DHCP client
+            subprocess.run(['sudo', 'dhclient', 'wlan0'], check=False)
+            
+            # Wait for connection
+            max_wait = 30
+            while max_wait > 0:
+                result = subprocess.run(['iwconfig', 'wlan0'], capture_output=True, text=True)
+                if net['ssid'] in result.stdout and 'ESSID:off/any' not in result.stdout:
+                    print(f"Successfully connected to {net['ssid']}")
+                    return True
+                max_wait -= 1
+                time.sleep(1)
+                print("Waiting for connection...")
+                
+    except Exception as e:
+        print(f"Connection failed: {e}")
+        
+    return False
+
+def main():
+    if not connect_wifi():
+        print("Could not connect to any known networks")
+
+if __name__ == '__main__':
+    main()

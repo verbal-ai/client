@@ -1,0 +1,19 @@
+{
+  "known_networks": [
+    {
+      "ssid": "Excitel-5G",
+      "password": "11223344",
+      "security": "wpa2"
+    },
+    {
+      "ssid": "BackupNetwork",
+      "password": "backuppass456",
+      "security": "wpa2"
+    }
+  ],
+  "ap_config": {
+    "ssid": "DeviceAP",
+    "password": "devicepass123",
+    "security": "wpa2"
+  }
+}
