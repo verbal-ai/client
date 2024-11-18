@@ -2,10 +2,9 @@ from dataclasses import dataclass
 from scipy.io.wavfile import write
 from typing import Optional, List, Dict, Any, Tuple
 from Levenshtein import distance
-from led.setup import green_pin, red_pin, setup_leds
-from led.functions import turn_on_pin, turn_off_pin
+# from led.setup import green_pin, red_pin, setup_leds
+# from led.functions import turn_on_pin, turn_off_pin
 import enum
-import os
 import time
 import threading
 import logging
@@ -26,7 +25,7 @@ VAD_WINDOW_SIZE = 512
 SPEAKING_THRESHOLD = 0.5
 SILENCE_THRESHOLD = 1
 AWAKE_THRESHOLD = 15
-WAKE_WORD = "hey"
+WAKE_WORD = "verbal"
 WAKE_WORD_SIMILARITY_THRESHOLD = 0.9
 API_ENDPOINT = "https://us-central1-dictationdaddy.cloudfunctions.net/verbalDemo"
 
@@ -51,6 +50,8 @@ class AudioConfig:
     awake_threshold: float = AWAKE_THRESHOLD
     channels: int = 1
     sample_width: int = 2  # 16-bit audio
+    wake_word = "verbal"
+    wake_word_similarity_threshold = 0.9
 
 
 class AudioDevice:
@@ -161,6 +162,11 @@ class AudioProcessor:
         self.lock = threading.Lock()
         self._audio_data: Optional[np.ndarray] = None
 
+        self.whisper_stream: Optional[subprocess.Popen] = None
+        self.out_queue: Optional[queue.Queue] = None
+        self.err_queue: Optional[queue.Queue] = None
+        self.wake_word_detected = threading.Event()
+
     def _setup_logger(self) -> logging.Logger:
         logging.basicConfig(
             level=logging.DEBUG,
@@ -168,6 +174,120 @@ class AudioProcessor:
             handlers=[logging.StreamHandler()]
         )
         return logging.getLogger(__name__)
+
+    def _check_for_wake_word(self, text: str) -> bool:
+        if not text:
+            return False
+
+        normalized_text = normalize_text(text)
+        words = normalized_text.split()
+        if not words:
+            return False
+
+        self.logger.debug(f"Checking words for wake word: {words}")
+        for word in words:
+            similarity = get_word_similarity(word, WAKE_WORD)
+            if similarity >= WAKE_WORD_SIMILARITY_THRESHOLD:
+                print(f"Wake word detected! Word: '{word}', matched with {WAKE_WORD} "
+                      f"(similarity: {similarity:.2f})")
+                return True
+        return False
+
+    def stream_reader(self, input_stream, output_queue, stream_name):
+        """Read from Whisper stream and process output."""
+        try:
+            self.logger.info(f"Starting stream reader for {stream_name}")
+            buffer = []
+
+            while not self.wake_word_detected.is_set():
+                line = input_stream.readline()
+                if not line:
+                    break
+
+                stripped_line = line.strip()
+                if not stripped_line:
+                    continue
+
+                buffer.append(stripped_line)
+                output_queue.put(stripped_line)
+
+                if stream_name == "STDOUT":
+                    complete_text = " ".join(buffer)
+                    if self._check_for_wake_word(complete_text):
+                        self.logger.info("Wake word detected - clearing buffer and stopping stream")
+                        self.wake_word_detected.set()
+                        buffer.clear()
+                        break
+
+                self.logger.info(f"Whisper {stream_name}: {stripped_line}")
+
+        except Exception as e:
+            self.logger.error(f"Error reading {stream_name}: {str(e)}")
+        finally:
+            self.logger.info(f"Closing stream reader for {stream_name}")
+            input_stream.close()
+
+    def _start_whisper_stream(self):
+        cmd = ["../modules/whisper.cpp/stream", "-m", "../modules/whisper.cpp/models/ggml-base.en.bin"]
+        self.whisper_stream = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+            bufsize=1
+        )
+
+        self.out_queue = queue.Queue()
+        self.err_queue = queue.Queue()
+        self.wake_word_detected.clear()
+
+        out_thread = threading.Thread(
+            target=self.stream_reader,
+            args=(self.whisper_stream.stdout, self.out_queue, "STDOUT"),
+            name="WhisperOutThread"
+        )
+        err_thread = threading.Thread(
+            target=self.stream_reader,
+            args=(self.whisper_stream.stderr, self.err_queue, "STDERR"),
+            name="WhisperErrThread"
+        )
+
+        out_thread.daemon = True
+        err_thread.daemon = True
+        out_thread.start()
+        err_thread.start()
+
+    def _stop_whisper_stream(self):
+        """Clean up Whisper stream resources."""
+        if self.whisper_stream:
+            self.whisper_stream.terminate()
+            try:
+                self.whisper_stream.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.whisper_stream.kill()
+
+            if self.whisper_stream.stdout:
+                self.whisper_stream.stdout.close()
+            if self.whisper_stream.stderr:
+                self.whisper_stream.stderr.close()
+
+            self.whisper_stream = None
+            self.out_queue = None
+            self.err_queue = None
+
+    def _process_audio_chunk(self, audio_data):
+        """Process audio chunk through Whisper stream."""
+        if self.whisper_stream and self.whisper_stream.poll() is None:
+            try:
+                with self.lock:
+                    int16_data = float32_to_int16(audio_data)
+                    self.whisper_stream.stdin.write(int16_data.tobytes())
+                    self.whisper_stream.stdin.flush()
+            except Exception as e:
+                self.logger.error(f"Error writing to Whisper stream: {e}")
+                self._stop_whisper_stream()
+                self._start_whisper_stream()
 
     def _init_vad_model(self) -> None:
         model_path = os.path.join(os.path.dirname(__file__), "..", "data", "silero_vad.jit")
@@ -211,14 +331,14 @@ class AudioProcessor:
         return payload, "wav"
 
     def _record_audio(self) -> bool:
-        """Record audio and return True if audio was successfully captured."""
+        """Record audio and return True if wake word or continuous conversation detected."""
         self.audio_chunks = []
         is_speaking = False
         silence_start = None
 
         try:
-            turn_on_pin(green_pin)
             AudioDevice.log_devices(self.logger)
+            self._start_whisper_stream()
 
             with sd.InputStream(
                 samplerate=self.config.sample_rate,
@@ -228,15 +348,17 @@ class AudioProcessor:
                 blocksize=self.config.window_size
             ) as stream:
                 self.logger.info(f"Stream opened - Device: {stream.device}, "
-                               f"Samplerate: {stream.samplerate}, "
-                               f"Channels: {stream.channels}")
+                                 f"Samplerate: {stream.samplerate}, "
+                                 f"Channels: {stream.channels}")
 
                 while self.current_state == State.LISTENING:
                     if len(self.audio_chunks) == 0:
                         time.sleep(0.01)
                         continue
 
-                    current_chunk = self.audio_chunks[-1].flatten()
+                    with self.lock:
+                        current_chunk = self.audio_chunks[-1].flatten()
+
                     tensor = torch.from_numpy(current_chunk).to(self.device)
                     speech_prob = self.model(tensor, self.config.sample_rate).item()
 
@@ -245,29 +367,28 @@ class AudioProcessor:
                             self.logger.info("Voice detected, recording...")
                             is_speaking = True
                         silence_start = None
+                        self._process_audio_chunk(current_chunk)
                     elif is_speaking:
                         if silence_start is None:
                             silence_start = time.time()
                         elif time.time() - silence_start > self.config.silence_threshold:
-                            self.logger.info("Processing audio...")
-                            self._audio_data = np.concatenate([chunk.flatten() for chunk in self.audio_chunks])
+                            self.logger.info("Processing final audio chunk...")
+                            with self.lock:
+                                self._audio_data = np.concatenate([chunk.flatten() for chunk in self.audio_chunks])
+
+                            # Check if we're in an active conversation
                             if time.time() - self.last_utterance < self.config.awake_threshold:
                                 return True
-                            elif contains_wake_word(self._audio_data):
-                                return True
-                            else:
-                                return False
 
-                    time.sleep(0.01)
+                            # Wait briefly for wake word detection
+                            wake_word_found = self.wake_word_detected.wait(timeout=1.0)
+                            return wake_word_found
 
         except Exception as e:
-            self.logger.error(f"Recording error: {e}", exc_info=True)
-            self.current_state = State.ERROR
+            self.logger.error(f"Error in audio recording: {e}")
             return False
-
         finally:
-            print("Turning off green pin")
-            turn_off_pin(green_pin)
+            self._stop_whisper_stream()
 
         return False
 
@@ -280,7 +401,7 @@ class AudioProcessor:
             return None
 
         try:
-            turn_on_pin(red_pin)
+            # turn_on_pin(red_pin)
             self.logger.info(f"Preparing audio data for API (length: {len(self._audio_data)} samples)")
 
             payload, audio_format = self._prepare_audio_for_api(self._audio_data)
@@ -337,7 +458,7 @@ class AudioProcessor:
         finally:
             self.last_utterance = time.time()
             print("Turning off red pin")
-            turn_off_pin(red_pin)
+            # turn_off_pin(red_pin)
 
     def play_audio(self, text: str) -> None:
         """
@@ -345,7 +466,7 @@ class AudioProcessor:
         Replace with actual TTS implementation.
         """
         try:
-            turn_on_pin(red_pin)
+            # turn_on_pin(red_pin)
             stream_audio(text)
             self.logger.info(f"Playing response: {text}")
             time.sleep(2)  # Simulating audio playback
@@ -354,7 +475,7 @@ class AudioProcessor:
             self.current_state = State.ERROR
         finally:
             print("Turning off red pin")
-            turn_off_pin(red_pin)
+            # turn_off_pin(red_pin)
 
     def run(self) -> None:
         self.logger.info("Starting audio processor...")
@@ -406,6 +527,7 @@ import requests
 import pyaudio
 import io
 import dotenv
+import os
 
 dotenv.load_dotenv()
 
@@ -436,11 +558,11 @@ def stream_audio(text):
     def audio_player():
         p = pyaudio.PyAudio()
         stream = p.open(format=FORMAT,
-                       channels=CHANNELS,
-                       rate=RATE,
-                       output=True,
-                       output_device_index=0, # Specify the headphone device
-                       frames_per_buffer=samples_per_chunk)
+                        channels=CHANNELS,
+                        rate=RATE,
+                        output=True,
+                        # output_device_index=0,  # Headphone device index
+                        frames_per_buffer=samples_per_chunk)
         
         print("Waiting for initial buffers to fill...")
         buffer_ready.wait()
@@ -503,7 +625,7 @@ def stream_audio(text):
 
 
 def main():
-    setup_leds()
+    # setup_leds()
     processor = AudioProcessor()
     processor.run()
 
