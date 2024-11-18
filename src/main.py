@@ -2,10 +2,9 @@ from dataclasses import dataclass
 from scipy.io.wavfile import write
 from typing import Optional, List, Dict, Any, Tuple
 from Levenshtein import distance
-from led.setup import green_pin, red_pin, setup_leds
-from led.functions import turn_on_pin, turn_off_pin
+# from led.setup import green_pin, red_pin, setup_leds
+# from led.functions import turn_on_pin, turn_off_pin
 import enum
-import os
 import time
 import threading
 import logging
@@ -26,7 +25,7 @@ VAD_WINDOW_SIZE = 512
 SPEAKING_THRESHOLD = 0.5
 SILENCE_THRESHOLD = 1
 AWAKE_THRESHOLD = 15
-WAKE_WORD = "hey"
+WAKE_WORD = "hello"
 WAKE_WORD_SIMILARITY_THRESHOLD = 0.9
 API_ENDPOINT = "https://us-central1-dictationdaddy.cloudfunctions.net/verbalDemo"
 
@@ -51,6 +50,8 @@ class AudioConfig:
     awake_threshold: float = AWAKE_THRESHOLD
     channels: int = 1
     sample_width: int = 2  # 16-bit audio
+    wake_word = "hello"
+    wake_word_similarity_threshold = 0.9
 
 
 class AudioDevice:
@@ -92,23 +93,6 @@ def create_wav_data(audio_data: np.ndarray, config: AudioConfig) -> bytes:
         return wav_buffer.getvalue()
 
 
-def create_wav_file(int16_data):
-    with wave.open('output_file.wav', 'wb') as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(16000)
-        wav_file.writeframes(int16_data.tobytes())
-
-
-def transcribe_audio_locally(model_path, audio_file):
-    result = subprocess.run(
-        ['../modules/whisper.cpp/main', '-m', model_path, '-f', audio_file],
-        capture_output=True,
-        text=True
-    )
-    return result.stdout
-
-
 def normalize_text(text: str) -> str:
     """Normalize text by converting to lowercase and removing punctuation."""
     text = text.lower()
@@ -123,29 +107,42 @@ def get_word_similarity(word1: str, word2: str) -> float:
     return 1 - (distance(word1, word2) / max_len)
 
 
-def contains_wake_word(audio_data):
-    int16_data = float32_to_int16(audio_data)
-    create_wav_file(int16_data)
-
-    model_path = "../modules/whisper.cpp/models/ggml-base.en.bin"
-    file_path = "./output_file.wav"
-    stt = transcribe_audio_locally(model_path, file_path)
-
-    normalized_text = normalize_text(stt)
-    words = normalized_text.split()
-
-    for word in words:
-        similarity = get_word_similarity(word, WAKE_WORD)
-        if similarity >= WAKE_WORD_SIMILARITY_THRESHOLD:
-            print(f"Wake word detected! Word: '{word}', matched with {WAKE_WORD} "
-                  f"(similarity: {similarity:.2f})")
-            return True
-
-    print(f"No wake word detected in text: '{normalized_text}'")
-    return False
-
-
 history = []
+
+
+class WhisperStreamProcessor:
+    def __init__(self, logger):
+        self.logger = logger
+        self.buffer = []
+        self.wake_word_found = False
+        self.complete_text = ""
+
+    def process_line(self, line: str) -> bool:
+        """Process a line of Whisper output and return True if wake word is found."""
+        stripped_line = line.strip()
+        if not stripped_line:
+            return False
+
+        self.logger.debug(f"Processing Whisper line: {stripped_line}")
+        self.buffer.append(stripped_line)
+        self.complete_text = " ".join(self.buffer)
+
+        normalized_text = normalize_text(self.complete_text)
+        words = normalized_text.split()
+
+        for word in words:
+            similarity = get_word_similarity(word, WAKE_WORD)
+            if similarity >= WAKE_WORD_SIMILARITY_THRESHOLD:
+                self.logger.info(f"Wake word detected! Word: '{word}', matched with {WAKE_WORD} "
+                                 f"(similarity: {similarity:.2f})")
+                return True
+        return False
+
+    def clear(self):
+        """Clear the buffer and reset state."""
+        self.buffer = []
+        self.complete_text = ""
+        self.wake_word_found = False
 
 
 class AudioProcessor:
@@ -157,9 +154,13 @@ class AudioProcessor:
         self._init_vad_model()
         self.current_state = State.IDLE
         self.last_utterance = time.time() - AWAKE_THRESHOLD
-        self.audio_chunks: List[np.ndarray] = []
+        self.audio_chunks = queue.Queue()
         self.lock = threading.Lock()
         self._audio_data: Optional[np.ndarray] = None
+
+        self.whisper_stream: Optional[subprocess.Popen] = None
+        self.whisper_processor: Optional[WhisperStreamProcessor] = None
+        self.processing = True
 
     def _setup_logger(self) -> logging.Logger:
         logging.basicConfig(
@@ -168,6 +169,81 @@ class AudioProcessor:
             handlers=[logging.StreamHandler()]
         )
         return logging.getLogger(__name__)
+
+    def _start_whisper_stream(self):
+        """Initialize and start the Whisper stream process."""
+        cmd = ["../modules/whisper.cpp/stream", "-m", "../modules/whisper.cpp/models/ggml-base.en.bin"]
+        self.whisper_stream = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            # Remove universal_newlines=True to keep binary mode
+            bufsize=0  # No buffering for binary data
+        )
+        self.whisper_processor = WhisperStreamProcessor(self.logger)
+
+    def _process_whisper_output(self) -> bool:
+        """Non-blocking check of Whisper output"""
+        if not self.whisper_stream or not self.whisper_processor:
+            return False
+
+        if self.whisper_stream.poll() is not None:
+            self.logger.error("Whisper stream process has terminated unexpectedly")
+            return False
+
+        try:
+            # Non-blocking read from stdout
+            import select
+            reads, _, _ = select.select([self.whisper_stream.stdout], [], [], 0)
+            if not reads:
+                return False
+
+            line = self.whisper_stream.stdout.readline()
+            if not line:
+                return False
+
+            # Decode bytes to string
+            line_str = line.decode('utf-8')
+            self.logger.debug(f"Raw Whisper output: {line_str.strip()}")
+            if self.whisper_processor.process_line(line_str):
+                return True
+
+        except Exception as e:
+            self.logger.error(f"Error processing Whisper output: {e}")
+            return False
+
+        return False
+
+    def _stop_whisper_stream(self):
+        """Clean up Whisper stream resources."""
+        if self.whisper_stream:
+            self.whisper_stream.terminate()
+            try:
+                self.whisper_stream.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.whisper_stream.kill()
+
+            if self.whisper_stream.stdout:
+                self.whisper_stream.stdout.close()
+            if self.whisper_stream.stderr:
+                self.whisper_stream.stderr.close()
+
+            self.whisper_stream = None
+            self.whisper_processor = None
+
+    def _process_audio_chunk(self, chunk):
+        """Process a single audio chunk through Whisper"""
+        if self.whisper_stream and self.whisper_stream.poll() is None:
+            try:
+                int16_data = float32_to_int16(chunk)
+                # Write raw bytes to stdin
+                self.whisper_stream.stdin.write(int16_data.tobytes())
+                self.whisper_stream.stdin.flush()
+            except Exception as e:
+                self.logger.error(f"Error writing to Whisper stream: {e}")
+                self._stop_whisper_stream()
+                self._start_whisper_stream()
 
     def _init_vad_model(self) -> None:
         model_path = os.path.join(os.path.dirname(__file__), "..", "data", "silero_vad.jit")
@@ -182,7 +258,10 @@ class AudioProcessor:
     def _audio_callback(self, indata: np.ndarray, frames: int, time: Any, status: Any) -> None:
         if status:
             self.logger.warning(f"Status: {status}")
-        self.audio_chunks.append(indata.copy())
+        try:
+            self.audio_chunks.put(indata.copy())
+        except queue.Full:
+            self.logger.warning("Audio buffer full, dropping chunk")
 
     def _prepare_audio_for_api(self, audio_data: np.ndarray) -> Tuple[Dict[str, Any], str]:
         """
@@ -211,14 +290,15 @@ class AudioProcessor:
         return payload, "wav"
 
     def _record_audio(self) -> bool:
-        """Record audio and return True if audio was successfully captured."""
-        self.audio_chunks = []
+        """Record and process audio"""
+        self.logger.info("Starting audio recording...")
         is_speaking = False
         silence_start = None
+        accumulated_chunks = []
 
         try:
-            turn_on_pin(green_pin)
             AudioDevice.log_devices(self.logger)
+            self._start_whisper_stream()
 
             with sd.InputStream(
                 samplerate=self.config.sample_rate,
@@ -228,46 +308,54 @@ class AudioProcessor:
                 blocksize=self.config.window_size
             ) as stream:
                 self.logger.info(f"Stream opened - Device: {stream.device}, "
-                               f"Samplerate: {stream.samplerate}, "
-                               f"Channels: {stream.channels}")
+                                 f"Samplerate: {stream.samplerate}, "
+                                 f"Channels: {stream.channels}")
 
                 while self.current_state == State.LISTENING:
-                    if len(self.audio_chunks) == 0:
-                        time.sleep(0.01)
-                        continue
+                    try:
+                        chunk = self.audio_chunks.get(timeout=0.1)
+                        current_chunk = chunk.flatten()
 
-                    current_chunk = self.audio_chunks[-1].flatten()
-                    tensor = torch.from_numpy(current_chunk).to(self.device)
-                    speech_prob = self.model(tensor, self.config.sample_rate).item()
+                        tensor = torch.from_numpy(current_chunk).to(self.device)
+                        speech_prob = self.model(tensor, self.config.sample_rate).item()
 
-                    if speech_prob >= self.config.speaking_threshold:
-                        if not is_speaking:
-                            self.logger.info("Voice detected, recording...")
-                            is_speaking = True
-                        silence_start = None
-                    elif is_speaking:
-                        if silence_start is None:
-                            silence_start = time.time()
-                        elif time.time() - silence_start > self.config.silence_threshold:
-                            self.logger.info("Processing audio...")
-                            self._audio_data = np.concatenate([chunk.flatten() for chunk in self.audio_chunks])
-                            if time.time() - self.last_utterance < self.config.awake_threshold:
+                        if speech_prob >= self.config.speaking_threshold:
+                            if not is_speaking:
+                                self.logger.info("Voice detected, recording...")
+                                is_speaking = True
+                            silence_start = None
+                            accumulated_chunks.append(current_chunk)
+                            self._process_audio_chunk(current_chunk)
+
+                            if self._process_whisper_output():
+                                self.logger.info("Wake word detected!")
+                                self._audio_data = np.concatenate(accumulated_chunks)
                                 return True
-                            elif contains_wake_word(self._audio_data):
-                                return True
-                            else:
+
+                        elif is_speaking:
+                            if silence_start is None:
+                                silence_start = time.time()
+                                accumulated_chunks.append(current_chunk)
+                            elif time.time() - silence_start > self.config.silence_threshold:
+                                self.logger.info("Silence detected, processing final audio...")
+                                self._audio_data = np.concatenate(accumulated_chunks)
+                                if time.time() - self.last_utterance < self.config.awake_threshold:
+                                    return True
+                                if self._process_whisper_output():
+                                    return True
                                 return False
 
-                    time.sleep(0.01)
+                    except queue.Empty:
+                        continue
+                    except Exception as e:
+                        self.logger.error(f"Error processing audio chunk: {e}")
+                        return False
 
         except Exception as e:
-            self.logger.error(f"Recording error: {e}", exc_info=True)
-            self.current_state = State.ERROR
+            self.logger.error(f"Error in audio recording: {e}")
             return False
-
         finally:
-            print("Turning off green pin")
-            turn_off_pin(green_pin)
+            self._stop_whisper_stream()
 
         return False
 
@@ -280,7 +368,7 @@ class AudioProcessor:
             return None
 
         try:
-            turn_on_pin(red_pin)
+            # turn_on_pin(red_pin)
             self.logger.info(f"Preparing audio data for API (length: {len(self._audio_data)} samples)")
 
             payload, audio_format = self._prepare_audio_for_api(self._audio_data)
@@ -337,7 +425,7 @@ class AudioProcessor:
         finally:
             self.last_utterance = time.time()
             print("Turning off red pin")
-            turn_off_pin(red_pin)
+            # turn_off_pin(red_pin)
 
     def play_audio(self, text: str) -> None:
         """
@@ -345,7 +433,7 @@ class AudioProcessor:
         Replace with actual TTS implementation.
         """
         try:
-            turn_on_pin(red_pin)
+            # turn_on_pin(red_pin)
             stream_audio(text)
             self.logger.info(f"Playing response: {text}")
             time.sleep(2)  # Simulating audio playback
@@ -354,7 +442,7 @@ class AudioProcessor:
             self.current_state = State.ERROR
         finally:
             print("Turning off red pin")
-            turn_off_pin(red_pin)
+            # turn_off_pin(red_pin)
 
     def run(self) -> None:
         self.logger.info("Starting audio processor...")
@@ -406,6 +494,7 @@ import requests
 import pyaudio
 import io
 import dotenv
+import os
 
 dotenv.load_dotenv()
 
@@ -436,11 +525,11 @@ def stream_audio(text):
     def audio_player():
         p = pyaudio.PyAudio()
         stream = p.open(format=FORMAT,
-                       channels=CHANNELS,
-                       rate=RATE,
-                       output=True,
-                       output_device_index=0, # Specify the headphone device
-                       frames_per_buffer=samples_per_chunk)
+                        channels=CHANNELS,
+                        rate=RATE,
+                        output=True,
+                        # output_device_index=0,  # Headphone device index
+                        frames_per_buffer=samples_per_chunk)
         
         print("Waiting for initial buffers to fill...")
         buffer_ready.wait()
@@ -503,7 +592,7 @@ def stream_audio(text):
 
 
 def main():
-    setup_leds()
+    # setup_leds()
     processor = AudioProcessor()
     processor.run()
 
