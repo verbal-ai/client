@@ -42,7 +42,6 @@ pycparser==2.22
 pyflakes==3.2.0
 pygame==2.6.1
 pytest==8.3.3
-import network
 python-dotenv==1.0.1
 requests==2.32.3
 setuptools==75.3.0
@@ -60,3 +59,4 @@ yarl==1.17.1
 Levenshtein==0.26.1
 netifaces==0.11.0
 psutil==6.1.0
+Flask==3.0.2

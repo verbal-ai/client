@@ -178,18 +178,30 @@ def setupInitWifi(ssid="Excitel-5G", password="11223344"):
     if os.path.isfile('wpa.conf'):
         with open('wpa.conf', 'r') as f:
             content = f.read()
-            if ssid in content and password in content:
-                return
+            if ssid not in content or password not in content:
+                pwd = 'psk="' + password + '"'
+                if password == "":
+                    pwd = "key_mgmt=NONE" # If open AP
 
-    pwd = 'psk="' + password + '"'
-    if password == "":
-        pwd = "key_mgmt=NONE" # If open AP
+                with open('wpa.conf', 'w') as f:
+                    f.write(wpa_conf % (ssid, pwd))
 
-    with open('wpa.conf', 'w') as f:
-        f.write(wpa_conf % (ssid, pwd))
-    subprocess.Popen(["./preload_wifi.sh"])
-
+    # Try connecting to 5G first
+    subprocess.Popen(["./preload_wifi.sh"], shell=True)
     time.sleep(10)
+
+    # If 5G fails, try 2.4G
+    if not wificonnected():
+        ssid = "Excitel-2.4G"
+        pwd = 'psk="' + password + '"'
+        if password == "":
+            pwd = "key_mgmt=NONE"
+
+        with open('wpa.conf', 'w') as f:
+            f.write(wpa_conf % (ssid, pwd))
+
+        subprocess.Popen(["./preload_wifi.sh"], shell=True)
+        time.sleep(10)
 
 
 if __name__ == "__main__":
@@ -197,7 +209,7 @@ if __name__ == "__main__":
     if not os.path.isfile('pi.id'):
         with open('pi.id', 'w') as f:
             f.write(id_generator())
-        subprocess.Popen("./expand_filesystem.sh")
+        subprocess.Popen("./expand_filesystem.sh", shell=True)
         time.sleep(300)
     piid = open('pi.id', 'r').read().strip()
     print(piid)

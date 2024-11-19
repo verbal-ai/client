@@ -12,7 +12,7 @@ import os
 def load_wifi_config():
     try:
         # Get the directory where the script is located
-        config_path = os.path.join(os.getcwd(), 'wifi.json')
+        config_path = os.path.join('/home/dev/', 'wifi.json')
         
         print(f"Attempting to load config from: {config_path}")  # Debug line
         
@@ -33,7 +33,32 @@ def load_wifi_config():
         print(f"Unexpected error loading wifi.json: {e}")
         return None
 
+
+def enable_services():
+    try:
+        # Enable wpa_supplicant first
+        subprocess.run(['sudo', 'systemctl', 'enable', 'wpa_supplicant'], check=True)
+        
+        # Check if dhcpcd service exists before enabling
+        result = subprocess.run(['systemctl', 'list-unit-files', 'dhcpcd.service'], 
+                              capture_output=True, 
+                              text=True)
+        
+        if 'dhcpcd.service' in result.stdout:
+            subprocess.run(['sudo', 'systemctl', 'enable', 'dhcpcd'], check=True)
+        else:
+            print("dhcpcd service not found, installing...")
+            subprocess.run(['sudo', 'apt-get', 'update'], check=True)
+            subprocess.run(['sudo', 'apt-get', 'install', '-y', 'dhcpcd5'], check=True)
+            subprocess.run(['sudo', 'systemctl', 'enable', 'dhcpcd'], check=True)
+            
+    except subprocess.CalledProcessError as e:
+        print(f"Error enabling services: {e}")
+        return False
+    return True
+
 def check_required_packages():
+    enable_services()
     required_packages = ['wireless-tools', 'wpasupplicant']
     missing_packages = []
     
