@@ -38,7 +38,7 @@ def getssid():
 def id_generator(size=6, chars=string.ascii_lowercase + string.digits):
     return ''.join(random.choice(chars) for _ in range(size))
 
-wpa_conf = """country=GB
+wpa_conf = """country=IN
 ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
 update_config=1
 network={
@@ -46,7 +46,7 @@ network={
     %s
 }"""
 
-wpa_conf_default = """country=GB
+wpa_conf_default = """country=IN
 ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
 update_config=1
 """
@@ -172,6 +172,26 @@ def wificonnected():
         return True
     return False
 
+def setupInitWifi(ssid="Excitel-5G", password="11223344"):
+
+    # Reads if file exist and has the correct ssid and password
+    if os.path.isfile('wpa.conf'):
+        with open('wpa.conf', 'r') as f:
+            content = f.read()
+            if ssid in content and password in content:
+                return
+
+    pwd = 'psk="' + password + '"'
+    if password == "":
+        pwd = "key_mgmt=NONE" # If open AP
+
+    with open('wpa.conf', 'w') as f:
+        f.write(wpa_conf % (ssid, pwd))
+    subprocess.Popen(["./preload_wifi.sh"])
+
+    time.sleep(10)
+
+
 if __name__ == "__main__":
     # things to run the first time it boots
     if not os.path.isfile('pi.id'):
@@ -182,6 +202,8 @@ if __name__ == "__main__":
     piid = open('pi.id', 'r').read().strip()
     print(piid)
     time.sleep(15)
+
+    setupInitWifi()
     # get status
     s = {'status':'disconnected'}
     if not os.path.isfile('status.json'):
