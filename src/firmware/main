@@ -81,6 +81,30 @@ def check_wifi_interface():
         print(f"Error checking WiFi interface: {e}")
         return False
 
+def cleanup_wifi():
+    """Thoroughly clean up all wireless interfaces and processes"""
+    try:
+        # Stop all related services
+        services = ['wpa_supplicant', 'dhcpcd', 'NetworkManager', 'dhclient']
+        for service in services:
+            subprocess.run(['sudo', 'systemctl', 'stop', service], check=False)
+            subprocess.run(['sudo', 'killall', service], check=False)
+        
+        # Remove the problematic control interface file
+        subprocess.run(['sudo', 'rm', '-rf', '/var/run/wpa_supplicant'], check=False)
+        subprocess.run(['sudo', 'mkdir', '-p', '/var/run/wpa_supplicant'], check=False)
+        
+        # Reset the wireless interface
+        subprocess.run(['sudo', 'ip', 'link', 'set', 'wlan0', 'down'], check=False)
+        time.sleep(1)
+        subprocess.run(['sudo', 'ip', 'link', 'set', 'wlan0', 'up'], check=False)
+        time.sleep(2)
+        
+        return True
+    except Exception as e:
+        print(f"Cleanup failed: {e}")
+        return False
+
 def connect_wifi():
     if not check_required_packages():
         return False
@@ -92,11 +116,12 @@ def connect_wifi():
     if not wifi_config:
         return False
     
+    # Clean up before starting
+    if not cleanup_wifi():
+        print("Failed to cleanup wireless interfaces")
+        return False
+    
     try:
-        print("Disconnecting from any existing networks...")
-        subprocess.run(['sudo', 'killall', 'wpa_supplicant'], check=False)
-        time.sleep(1)
-        
         for net in wifi_config['known_networks']:
             print(f"\nTrying to connect to {net['ssid']}")
             
@@ -119,24 +144,16 @@ def connect_wifi():
             # Set proper permissions
             subprocess.run(['sudo', 'chmod', '600', '/etc/wpa_supplicant/wpa_supplicant.conf'])
             
-            # Stop existing wpa_supplicant
-            subprocess.run(['sudo', 'systemctl', 'stop', 'wpa_supplicant'], check=False)
-            time.sleep(1)
-            
-            # Start wpa_supplicant manually with the correct interface
+            # Start wpa_supplicant with specific socket path
             subprocess.run([
-                'sudo', 
+                'sudo',
                 'wpa_supplicant',
-                '-B',  # Run in background
-                '-i', 'wlan0',  # Interface name
-                '-c', '/etc/wpa_supplicant/wpa_supplicant.conf'  # Config file
+                '-B',                    # Run in background
+                '-i', 'wlan0',          # Interface name
+                '-c', '/etc/wpa_supplicant/wpa_supplicant.conf',  # Config file
+                '-P', '/var/run/wpa_supplicant.pid',  # PID file
+                '-D', 'nl80211,wext'    # Driver options
             ], check=False)
-            
-            # Wait a moment for wpa_supplicant to start
-            time.sleep(2)
-            
-            # Start DHCP client
-            subprocess.run(['sudo', 'dhclient', 'wlan0'], check=False)
             
             # Wait for connection
             max_wait = 30
@@ -144,6 +161,9 @@ def connect_wifi():
                 result = subprocess.run(['iwconfig', 'wlan0'], capture_output=True, text=True)
                 if net['ssid'] in result.stdout and 'ESSID:off/any' not in result.stdout:
                     print(f"Successfully connected to {net['ssid']}")
+                    
+                    # Get IP address via DHCP
+                    subprocess.run(['sudo', 'dhclient', 'wlan0'], check=False)
                     return True
                 max_wait -= 1
                 time.sleep(1)
