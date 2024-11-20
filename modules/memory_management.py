@@ -2,7 +2,7 @@ import json
 import os
 from typing import Any, Dict, Optional, List
 import xml.etree.ElementTree as ET
-from . import utils
+from modules import utils
 
 
 class MemoryManager:
