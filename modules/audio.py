@@ -1,26 +1,38 @@
 import asyncio
 import pyaudio
 import logging
+from contextlib import asynccontextmanager
 from .utils import FORMAT, CHANNELS, RATE
 
 
-async def play_audio(audio_data):
+@asynccontextmanager
+async def create_audio_player():
     p = pyaudio.PyAudio()
-    stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, output=True)
-    stream.write(audio_data)
+    stream = None
+    try:
+        stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, output=True)
+        yield stream
+    finally:
+        if stream:
+            if stream.is_active():
+                stream.stop_stream()
+            stream.close()
+        p.terminate()
 
-    # Add a small delay of silence at the end to prevent popping, and weird cuts off sounds
-    silence_duration = 0.4
-    silence_frames = int(RATE * silence_duration)
-    silence = b"\x00" * (
-        silence_frames * CHANNELS * 2
-    )  # 2 bytes per sample for 16-bit audio
-    stream.write(silence)
 
-    # Add a small pause before closing the stream to make sure the audio is fully played
-    await asyncio.sleep(0.5)
+async def play_audio(audio_data):
+    try:
+        async with create_audio_player() as stream:
+            stream.write(audio_data)
 
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
-    logging.debug("Audio playback completed")
+            silence_duration = 0.4
+            silence_frames = int(RATE * silence_duration)
+            silence = b"\x00" * (silence_frames * CHANNELS * 2)
+            stream.write(silence)
+
+            await asyncio.sleep(0.5)
+
+        logging.debug("Audio playback completed successfully")
+    except Exception as e:
+        logging.error(f"Error during audio playback: {e}")
+        raise
