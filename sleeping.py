@@ -204,8 +204,14 @@ class WakeWordDetector:
             return False
 
     def start(self):
-        """Start wake word detection."""
+        """
+        Start wake word detection.
+
+        Returns:
+            bool: True if wake word was detected, False if stopped by other means
+        """
         self.logger.info("Starting wake word detection...")
+        wake_word_detected = False
 
         try:
             self._start_whisper_stream()
@@ -224,28 +230,29 @@ class WakeWordDetector:
                         chunk = self.audio_chunks.get(timeout=0.1)
                         current_chunk = chunk.flatten()
 
-                        # Voice Activity Detection
                         tensor = torch.from_numpy(current_chunk).to(self.device)
                         speech_prob = self.model(tensor, self.config.sample_rate).item()
 
                         if speech_prob >= self.config.speaking_threshold:
                             self._process_audio_chunk(current_chunk)
 
-                            # Check for wake word
                             if self._process_whisper_output():
                                 self.current_state = State.WAKE_WORD_DETECTED
                                 self.logger.info("Wake word detected! Stopping detection...")
+                                wake_word_detected = True
                                 break
 
                     except queue.Empty:
                         continue
                     except Exception as e:
                         self.logger.error(f"Error in detection loop: {e}")
+                        break
 
         except KeyboardInterrupt:
             self.logger.info("Wake word detection stopped by user.")
         finally:
             self._stop_whisper_stream()
+        return wake_word_detected
 
 
 def main():
