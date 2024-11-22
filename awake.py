@@ -54,7 +54,7 @@ def log_runtime(function_or_name: str, duration: float):
 
 
 class RealtimeAPI:
-    def __init__(self, prompts=None):
+    def __init__(self, prompts=None, silence_timeout=5):
         self.prompts = prompts
         self.api_key = os.getenv("OPENAI_API_KEY")
         if not self.api_key:
@@ -71,9 +71,47 @@ class RealtimeAPI:
         self.function_call_args = ""
         self.response_start_time = None
 
+        # Silence detection variables
+        self.silence_timeout = silence_timeout
+        self.last_speech_time = time.time()
+        self.silence_check_task = None
+        self.should_restart = False
+
+    async def cleanup(self):
+        """Properly cleanup audio resources"""
+        if self.silence_check_task:
+            self.silence_check_task.cancel()
+            try:
+                await self.silence_check_task
+            except asyncio.CancelledError:
+                pass
+
+        if hasattr(self, 'mic'):
+            self.mic.stop_recording()
+            self.mic.close()
+
+        await asyncio.sleep(0.5)
+
+    async def check_silence(self):
+        while not self.exit_event.is_set():
+            await asyncio.sleep(1)
+            current_time = time.time()
+            if (not self.response_in_progress and
+                    current_time - self.last_speech_time > self.silence_timeout):
+                logger.info(f"No activity detected for {self.silence_timeout} seconds")
+                self.should_restart = True
+                self.exit_event.set()
+                break
+
     async def run(self):
         while True:
             try:
+                self.should_restart = False
+                self.exit_event.clear()
+                self.last_speech_time = time.time()
+
+                self.silence_check_task = asyncio.create_task(self.check_silence())
+
                 url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01"
                 headers = {
                     "Authorization": f"Bearer {self.api_key}",
@@ -103,32 +141,29 @@ class RealtimeAPI:
                         logger.info("Recording started. Listening for speech...")
 
                     await self.send_audio_loop(websocket)
-
-                    logger.info("before await ws_task")
-
-                    # Wait for the WebSocket processing task to complete
                     await ws_task
 
-                    logger.info("await ws_task complete")
+                if self.should_restart:
+                    logger.info("Returning to wake word detection...")
+                    await self.cleanup()
+                    return True
+                return False
 
-                # If execution reaches here without exceptions, exit the loop
-                break
             except ConnectionClosedError as e:
                 if "keepalive ping timeout" in str(e):
                     logger.warning(
                         "WebSocket connection lost due to keepalive ping timeout. Reconnecting..."
                     )
-                    await asyncio.sleep(1)  # Wait before reconnecting
-                    continue  # Retry the connection
+                    await asyncio.sleep(1)
+                    continue
                 else:
                     logger.exception("WebSocket connection closed unexpectedly.")
-                    break  # Exit the loop on other connection errors
+                    break
             except Exception as e:
                 logger.exception(f"An unexpected error occurred: {e}")
-                break  # Exit the loop on unexpected exceptions
+                break
             finally:
-                self.mic.stop_recording()
-                self.mic.close()
+                await self.cleanup()
 
     async def initialize_session(self, websocket):
         session_update = {
@@ -278,6 +313,7 @@ class RealtimeAPI:
         self.audio_chunks = []
         logger.info("Calling stop_receiving()")
         self.mic.stop_receiving()
+        self.last_speech_time = time.time()
 
     async def handle_error(self, event, websocket):
         error_message = event.get("error", {}).get("message", "")
@@ -294,6 +330,7 @@ class RealtimeAPI:
         self.mic.stop_recording()
         logger.info("Speech ended, processing...")
         self.response_start_time = time.perf_counter()
+        self.last_speech_time = time.time()
         await websocket.send(json.dumps({"type": "input_audio_buffer.commit"}))
 
     async def send_initial_prompts(self, websocket):

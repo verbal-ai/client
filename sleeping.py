@@ -51,12 +51,6 @@ def get_word_similarity(word1: str, word2: str) -> float:
     return 1 - (distance(word1, word2) / max_len)
 
 
-class State(enum.Enum):
-    IDLE = "idle"
-    LISTENING = "listening"
-    WAKE_WORD_DETECTED = "wake_word_detected"
-
-
 class WhisperStreamProcessor:
     def __init__(self, logger):
         self.logger = logger
@@ -100,7 +94,7 @@ class AudioConfig:
     speaking_threshold: float = SPEAKING_THRESHOLD
     silence_threshold: float = SILENCE_THRESHOLD
     channels: int = 1
-    sample_width: int = 2  # 16-bit audio
+    sample_width: int = 2
     wake_word: str = WAKE_WORD
     wake_word_similarity_threshold: float = WAKE_WORD_SIMILARITY_THRESHOLD
 
@@ -109,7 +103,6 @@ class WakeWordDetector:
     def __init__(self, config: Optional[AudioConfig] = None):
         self.logger = _setup_logger()
         self.config = config or AudioConfig()
-        self.current_state = State.IDLE
 
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self._init_vad_model()
@@ -118,6 +111,30 @@ class WakeWordDetector:
         self.whisper_stream: Optional[subprocess.Popen] = None
         self.whisper_processor: Optional[WhisperStreamProcessor] = None
         self.lock = threading.Lock()
+        self.stream = None
+
+    def cleanup(self):
+        """Clean up all resources."""
+        self.logger.info("Cleaning up resources...")
+        self._stop_whisper_stream()
+
+        if self.stream is not None:
+            try:
+                self.stream.close()
+            except Exception as e:
+                self.logger.error(f"Error closing stream: {e}")
+            self.stream = None
+
+        while not self.audio_chunks.empty():
+            try:
+                self.audio_chunks.get_nowait()
+            except queue.Empty:
+                break
+
+        try:
+            sd.stop()
+        except Exception as e:
+            self.logger.error(f"Error stopping sounddevice: {e}")
 
     def _init_vad_model(self) -> None:
         model_path = os.path.join(os.path.dirname(__file__), "data", "silero_vad.jit")
@@ -129,6 +146,9 @@ class WakeWordDetector:
 
     def _start_whisper_stream(self):
         """Initialize and start the Whisper stream process."""
+        if self.whisper_stream is not None:
+            self._stop_whisper_stream()
+
         cmd = ["modules/whisper.cpp/stream", "-m", "modules/whisper.cpp/models/ggml-base.en.bin"]
         self.whisper_stream = subprocess.Popen(
             cmd,
@@ -142,16 +162,20 @@ class WakeWordDetector:
     def _stop_whisper_stream(self):
         """Clean up Whisper stream resources."""
         if self.whisper_stream:
-            self.whisper_stream.terminate()
             try:
+                self.whisper_stream.terminate()
                 self.whisper_stream.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.whisper_stream.kill()
+            except Exception as e:
+                self.logger.error(f"Error terminating Whisper stream: {e}")
 
-            if self.whisper_stream.stdout:
-                self.whisper_stream.stdout.close()
-            if self.whisper_stream.stderr:
-                self.whisper_stream.stderr.close()
+            for pipe in [self.whisper_stream.stdout, self.whisper_stream.stderr, self.whisper_stream.stdin]:
+                if pipe:
+                    try:
+                        pipe.close()
+                    except Exception as e:
+                        self.logger.error(f"Error closing pipe: {e}")
 
             self.whisper_stream = None
             self.whisper_processor = None
@@ -203,6 +227,35 @@ class WakeWordDetector:
             self.logger.error(f"Error processing Whisper output: {e}")
             return False
 
+    def _init_audio_stream(self):
+        """Initialize the audio input stream with error handling."""
+        try:
+            devices = sd.query_devices()
+            input_device = None
+
+            for device in devices:
+                if device['max_input_channels'] > 0:
+                    input_device = device['index']
+                    break
+
+            if input_device is None:
+                raise RuntimeError("No valid input device found")
+
+            self.logger.info(f"Using input device: {input_device}")
+
+            self.stream = sd.InputStream(
+                device=input_device,
+                samplerate=self.config.sample_rate,
+                channels=self.config.channels,
+                dtype=np.float32,
+                callback=self._audio_callback,
+                blocksize=self.config.window_size
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"Error initializing audio stream: {e}")
+            return False
+
     def start(self):
         """
         Start wake word detection.
@@ -214,16 +267,13 @@ class WakeWordDetector:
         wake_word_detected = False
 
         try:
+            if not self._init_audio_stream():
+                return False
+
             self._start_whisper_stream()
 
-            with sd.InputStream(
-                samplerate=self.config.sample_rate,
-                channels=self.config.channels,
-                dtype=np.float32,
-                callback=self._audio_callback,
-                blocksize=self.config.window_size
-            ) as stream:
-                self.logger.info(f"Stream opened: Rate {stream.samplerate}, Channels {stream.channels}")
+            with self.stream:
+                self.logger.info(f"Stream opened: Rate {self.stream.samplerate}, Channels {self.stream.channels}")
 
                 while True:
                     try:
@@ -237,7 +287,6 @@ class WakeWordDetector:
                             self._process_audio_chunk(current_chunk)
 
                             if self._process_whisper_output():
-                                self.current_state = State.WAKE_WORD_DETECTED
                                 self.logger.info("Wake word detected! Stopping detection...")
                                 wake_word_detected = True
                                 break
@@ -250,14 +299,16 @@ class WakeWordDetector:
 
         except KeyboardInterrupt:
             self.logger.info("Wake word detection stopped by user.")
-        finally:
-            self._stop_whisper_stream()
+
         return wake_word_detected
 
 
 def main():
     detector = WakeWordDetector()
-    detector.start()
+    try:
+        detector.start()
+    finally:
+        detector.cleanup()
 
 
 if __name__ == "__main__":
