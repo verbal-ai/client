@@ -75,6 +75,7 @@ class RealtimeAPI:
             sys.exit(1)
         self.exit_event = asyncio.Event()
         self.mic = AsyncMicrophone()
+        self.websocket = None
 
         # Initialize state variables
         self.assistant_reply = ""
@@ -90,13 +91,21 @@ class RealtimeAPI:
         self.is_idle = True
 
     
-    def check_idle_timeout_reached(self):
+    async def check_idle_timeout_reached(self):
         logger.info(f"Checking idle timeout. is_idle: {self.is_idle}")
         if self.is_idle:    
             if time.perf_counter() - self.last_speech_time > self.timeout_duration:
                 logger.info(f"No speech detected for {self.timeout_duration} seconds. Stopping recording.")
+                await self.clear_websocket()
                 if self.timeout_callback:
-                    self.timeout_callback()
+                    await self.timeout_callback()
+
+    async def clear_websocket(self):
+        await self.websocket.close()
+        self.mic.stop_recording()
+        self.mic.close()
+        self.exit_event.set()
+        self.websocket = None
 
     async def run(self):
         while True:
@@ -116,6 +125,8 @@ class RealtimeAPI:
                     ping_timeout=10,
                 ) as websocket:
                     log_info("✅ Connected to the server.", style="bold green")
+                    self.websocket = websocket
+                    self.last_speech_time = time.perf_counter()
 
                     await self.initialize_session(websocket)
                     ws_task = asyncio.create_task(self.process_ws_messages(websocket))
@@ -191,6 +202,7 @@ class RealtimeAPI:
                 break
 
     async def handle_event(self, event, websocket):
+        await self.check_idle_timeout_reached()
         event_type = event.get("type")
         if event_type == "response.created":
             self.mic.start_receiving()
@@ -352,7 +364,7 @@ class RealtimeAPI:
     async def send_audio_loop(self, websocket):
         try:
             while not self.exit_event.is_set():
-                self.check_idle_timeout_reached()
+                await self.check_idle_timeout_reached()
                 await asyncio.sleep(0.1)  # Small delay to accumulate audio data
                 if not self.mic.is_receiving:
                     audio_data = self.mic.get_audio_data()

@@ -1,0 +1,17 @@
+[Unit]
+Description=Voice Assistant Service
+After=network.target
+
+[Service]
+Type=simple
+Environment=VIRTUAL_ENV=/home/dev/venv
+Environment=PATH=/home/dev/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
+ExecStart=/bin/bash -c 'source /home/dev/venv/bin/activate && python3 /home/dev/src/main.py'
+WorkingDirectory=/home/dev/src/
+StandardOutput=inherit
+StandardError=inherit
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
