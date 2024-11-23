@@ -67,7 +67,7 @@ def log_runtime(function_or_name: str, duration: float):
 
 
 class RealtimeAPI:
-    def __init__(self, prompts=None):
+    def __init__(self, prompts=None, timeout_duration=10, timeout_callback=None):
         self.prompts = prompts
         self.api_key = os.getenv("OPENAI_API_KEY")
         if not self.api_key:
@@ -83,6 +83,20 @@ class RealtimeAPI:
         self.function_call = None
         self.function_call_args = ""
         self.response_start_time = None
+
+        self.timeout_duration = timeout_duration
+        self.timeout_callback = timeout_callback
+        self.last_speech_time = time.perf_counter()
+        self.is_idle = True
+
+    
+    def check_idle_timeout_reached(self):
+        logger.info(f"Checking idle timeout. is_idle: {self.is_idle}")
+        if self.is_idle:    
+            if time.perf_counter() - self.last_speech_time > self.timeout_duration:
+                logger.info(f"No speech detected for {self.timeout_duration} seconds. Stopping recording.")
+                if self.timeout_callback:
+                    self.timeout_callback()
 
     async def run(self):
         while True:
@@ -194,12 +208,18 @@ class RealtimeAPI:
         elif event_type == "response.audio.delta":
             self.audio_chunks.append(base64.b64decode(event["delta"]))
         elif event_type == "response.done":
+            self.last_speech_time = time.perf_counter()
             await self.handle_response_done()
+            self.is_idle = True
         elif event_type == "error":
             await self.handle_error(event, websocket)
         elif event_type == "input_audio_buffer.speech_started":
+            self.last_speech_time = time.perf_counter()
+            self.is_idle = False
             logger.info("Speech detected, listening...")
         elif event_type == "input_audio_buffer.speech_stopped":
+            self.last_speech_time = time.perf_counter()
+            self.is_idle = False
             await self.handle_speech_stopped(websocket)
         elif event_type == "rate_limits.updated":
             self.response_in_progress = False
@@ -332,6 +352,7 @@ class RealtimeAPI:
     async def send_audio_loop(self, websocket):
         try:
             while not self.exit_event.is_set():
+                self.check_idle_timeout_reached()
                 await asyncio.sleep(0.1)  # Small delay to accumulate audio data
                 if not self.mic.is_receiving:
                     audio_data = self.mic.get_audio_data()
