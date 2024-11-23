@@ -6,7 +6,7 @@ from deepgram import DeepgramWakeWordDetector
 async def main_loop():
     while True:
         detector = DeepgramWakeWordDetector()
-        is_awake = detector.start(duration=5.0)
+        is_awake = detector.start()
 
         if is_awake:
             realtime_api_instance = RealtimeAPI(silence_timeout=10)

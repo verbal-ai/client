@@ -181,26 +181,23 @@ class DeepgramWakeWordDetector:
 
         return False
 
-    def start(self, duration: float = 5.0) -> bool:
+    def start(self) -> bool:
         """
-        Start wake word detection for specified duration.
-        Returns True if wake word is detected, False otherwise.
+        Start wake word detection and run indefinitely until wake word is detected.
+        Returns True when wake word is detected.
         """
         self.logger.info("Starting wake word detection...")
 
         try:
-            # Calculate number of frames based on duration
-            num_frames = int(duration * self.config.sample_rate / self.config.window_size)
-
             with sd.InputStream(
                 samplerate=self.config.sample_rate,
                 channels=self.config.channels,
                 dtype=np.float32,
                 blocksize=self.config.window_size
             ) as stream:
-                self.logger.info(f"Listening for {duration} seconds...")
+                self.logger.info("Listening for wake word...")
 
-                for _ in range(num_frames):
+                while True:  # Run indefinitely
                     audio_chunk, _ = stream.read(self.config.window_size)
                     current_chunk = audio_chunk.flatten()
 
@@ -216,19 +213,13 @@ class DeepgramWakeWordDetector:
                         if self._process_speech_segment():
                             return True
 
-                # Process any remaining speech in buffer
-                if self.speech_buffer.tell() > 0:
-                    return self._process_speech_segment()
-
         except Exception as e:
             self.logger.error(f"Error in wake word detection: {e}")
-
-        return False
-
+            return False
 
 def main():
     detector = DeepgramWakeWordDetector()
-    detected = detector.start(duration=5.0)
+    detected = detector.start()
     print(f"Wake word {'detected' if detected else 'not detected'}")
 
 
