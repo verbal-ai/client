@@ -1,0 +1,13 @@
+{
+    "browser_urls": [
+      "https://chat.openai.com",
+      "https://google.com",
+      "https://claude.ai/chat",
+      "https://gemini.google.com/u/1/",
+      "https://openai.com/index/introducing-the-realtime-api/"
+    ],
+    "browser_command": "open -a 'Google Chrome'",
+    "ai_assistant_name": "Robot",
+    "human_name": "Human",
+    "system_message_suffix": "Output your response in haiku style."
+}

@@ -24,8 +24,8 @@ def deploy_to_pi():
             '--exclude', '*.pyc',
             '--exclude', '*.pyo',
             '--exclude', '*.pyd',
-            '--exclude', '.env/',
             '--exclude', '.DS_Store',
+            '--include', '.env',
             './',                      # current directory
             f'{PI_USER}@{PI_HOST}:{REMOTE_DIR}/'
         ]

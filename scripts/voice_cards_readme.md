@@ -33,6 +33,21 @@ card Headphones
 }
 ```
 
+You can use the cat command.
+```
+sudo sh -c 'cat > /etc/asound.conf << EOL
+pcm.!default {
+    type hw
+    card Headphones
+}
+
+ctl.!default {
+    type hw
+    card Headphones
+}
+EOL'
+```
+
 ## Testing Audio Output
 
 ```
