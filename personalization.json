@@ -9,5 +9,5 @@
     "browser_command": "open -a 'Google Chrome'",
     "ai_assistant_name": "Robot",
     "human_name": "Human",
-    "system_message_suffix": "Output your response in haiku style."
+    "system_message_suffix": "Keep your responses concise and to the point and be humorous."
 }

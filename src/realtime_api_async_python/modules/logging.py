@@ -3,8 +3,15 @@ import sys
 from rich.logging import RichHandler
 from rich.console import Console
 from rich.text import Text
+from dotenv import load_dotenv
+import os
+load_dotenv()   
+
 
 console = Console()
+allowed_logging = os.getenv("ALLOW_LOGGING", "false").lower() == "true"
+if not allowed_logging:
+    console = None
 
 def setup_logging():
     # Set up logging with Rich
@@ -58,6 +65,8 @@ def log_ws_event(direction, event):
     emoji = event_emojis.get(event_type, "❓")
     icon = "⬆️ - Out" if direction == "Outgoing" else "⬇️ - In"
     style = "bold cyan" if direction == "Outgoing" else "bold green"
+    if not allowed_logging:
+        return
     logger.info(Text(f"{emoji} {icon} {event_type}", style=style))
 
 def log_tool_call(function_name, args, result):
@@ -68,6 +77,8 @@ def log_error(message):
     logger.error(Text(message, style="bold red"))
 
 def log_info(message, style="bold white"):
+    if not allowed_logging:
+        return
     logger.info(Text(message, style=style))
 
 def log_warning(message):

@@ -1,34 +1,40 @@
 import asyncio
 import pyaudio
+import numpy as np
 from .utils import FORMAT, CHANNELS, RATE
 from .logging import logger, log_info, log_warning, log_error
 
-async def play_audio(audio_data, device_index=None):
+async def play_audio(audio_data, device_index=None, volume_multiplier=4.0):
     p = pyaudio.PyAudio()
     
-    # Print available devices
-    log_info("\nAvailable Audio Devices:", style="bold blue")
-    for i in range(p.get_device_count()):
-        dev_info = p.get_device_info_by_index(i)
-        log_info(f"Device {i}: {dev_info['name']}", style="blue")
-    
     try:
-        # Open stream with specific device if provided
+        # Convert bytes to numpy array for volume adjustment
+        audio_array = np.frombuffer(audio_data, dtype=np.int16)
+        
+        # Increase volume (multiply the amplitude)
+        audio_array = audio_array * volume_multiplier
+        
+        # Prevent clipping by clipping to 16-bit integer range
+        audio_array = np.clip(audio_array, -32768, 32767)
+        
+        # Convert back to bytes
+        amplified_audio = audio_array.astype(np.int16).tobytes()
+        
+        # Open stream with specific device
         stream = p.open(
             format=FORMAT,
             channels=CHANNELS,
             rate=RATE,
             output=True,
-            output_device_index=0 #3.5mm jack
+            output_device_index=0  # 3.5mm jack
         )
         
-        current_device = p.get_device_info_by_index(
-            device_index or p.get_default_output_device_info()['index']
-        )
+        current_device = p.get_device_info_by_index(0)
         log_info(f"Using audio device: {current_device['name']}", style="bold green")
+        log_info(f"Volume multiplier: {volume_multiplier}x", style="bold blue")
         
-        # Play audio
-        stream.write(audio_data)
+        # Play amplified audio
+        stream.write(amplified_audio)
 
         # Add silence at the end
         silence_duration = 0.4
