@@ -8,7 +8,7 @@
 4. USB-C charging cable
 
 
-Steps to setup Open AI Real Time APIs on Raspberry Devices.
+## Steps to setup Open AI Real Time APIs on Raspberry Devices.
 
 1. Clone this Repo on your Raspberry Pi device.
 2. Checkout the branch realtime.
@@ -17,7 +17,8 @@ Steps to setup Open AI Real Time APIs on Raspberry Devices.
 5. Do `pip install`.
 6. run `python source/main.py`
 
-## Setup
+![IMG20241126193141](https://github.com/user-attachments/assets/bcb4141f-fa94-4d95-ad99-e18fcdd4242a)
+![IMG20241126193151](https://github.com/user-attachments/assets/e8fd1dc7-d66f-4cc6-889e-32114c8d9286)
 
 https://github.com/sabhiram/raspberry-wifi-conf/issues
 https://github.com/schollz/raspberry-pi-turnkey
