@@ -1,9 +1,11 @@
 # Firmware For Running Open AI Real Time APIS on the Raspberry PI devices.
 
 
-## About
-
-## Architecture
+## Components
+1. Raspiberry 4
+2. Aux Speaker
+3. USB Microphone
+4. USB-C charging cable
 
 
 Steps to setup Open AI Real Time APIs on Raspberry Devices.
