@@ -17,6 +17,11 @@
 5. Do `pip install`.
 6. run `python source/main.py`
 
+## Roadmap
+1.  Fix the latency in wakeword detection and client setup
+2.  Create a case for the device.
+3.  Figure out a new speaker and compact microphone for the device.
+
 ![IMG20241126193141](https://github.com/user-attachments/assets/bcb4141f-fa94-4d95-ad99-e18fcdd4242a)
 ![IMG20241126193151](https://github.com/user-attachments/assets/e8fd1dc7-d66f-4cc6-889e-32114c8d9286)
 
