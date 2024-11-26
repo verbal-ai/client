@@ -1,6 +1,6 @@
 # Firmware For Running Open AI Real Time APIS on the Raspberry PI devices.
 
-#Architecture
+## Architecture
 
 
 Steps to setup Open AI Real Time APIs on Raspberry Devices.
