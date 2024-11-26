@@ -8,9 +8,12 @@
 
 Steps to setup Open AI Real Time APIs on Raspberry Devices.
 
-1. Clone this Repo on your Raspberry Pi device.  
-2. do `pip install` by creating a virtual environment.  
-3. run `python source/main.py`
+1. Clone this Repo on your Raspberry Pi device.
+2. Checkout the branch realtime.
+3. Create virtual env `pythom -m venv venv`
+4. Enter the env `source venv/bin/activate`
+5. Do `pip install`.
+6. run `python source/main.py`
 
 ## Setup
 
