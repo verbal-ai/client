@@ -137,3 +137,32 @@ arecord -l
 # Test specific device
 speaker-test -D hw:0,0 -c 2
 ````
+
+# Audio Configuration Guide
+
+## Issue Description
+When running audio applications on Raspberry Pi, ALSA (Advanced Linux Sound Architecture) performs unnecessary device scanning, resulting in numerous error messages:
+- Multiple "Unknown PCM" errors for various audio devices
+- JACK server connection errors
+- Device scanning for non-existent audio configurations (surround sound, HDMI, etc.)
+- Unnecessary resource usage during startup
+
+## Hardware Setup
+- **Microphone**: Samson Q2U Microphone (USB Audio)
+  - Card: 3
+  - Device: 0
+- **Speaker**: Raspberry Pi Headphones (bcm2835)
+  - Card: 0
+  - Device: 0
+
+## Solution Steps
+
+### 1. Identify Audio Devices
+List available audio devices:
+```bash
+# List recording devices
+arecord -l
+
+# List playback devices
+aplay -l
+```

@@ -9,7 +9,7 @@ from realtime_api_async_python.modules.logging import log_info, log_error, log_w
 class WakeWordDetector:
     def __init__(
         self,
-        model_path: str = "data/vosk-model-small-en-us-0.15",
+        model_path: str = os.getenv("VOSK_MODEL_PATH", "data/vosk-model-small-en-us-0.15"),
         wake_word: str = "hey",
         callback: Optional[Callable] = None,
         sample_rate: int = 16000

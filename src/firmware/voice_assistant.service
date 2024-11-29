@@ -6,11 +6,14 @@ After=network.target
 Type=simple
 Environment=VIRTUAL_ENV=/home/dev/venv
 Environment=PATH=/home/dev/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
-ExecStart=/bin/bash -c 'source /home/dev/venv/bin/activate && python3 /home/dev/src/main.py'
+Environment=PERSONALIZATION_FILE=/home/dev/personalization.json
+Environment=VOSK_MODEL_PATH=/home/dev/data/vosk-model-small-en-us-0.15
+ExecStart=/bin/bash -c 'source /home/dev/venv/bin/activate; python3 /home/dev/src/main.py'
 WorkingDirectory=/home/dev/src/
 StandardOutput=inherit
 StandardError=inherit
 Restart=always
+RestartSec=5
 User=root
 
 [Install]
