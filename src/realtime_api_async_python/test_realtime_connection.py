@@ -1,11 +1,39 @@
 import asyncio
 import websockets
 import os
+import time
+import ssl
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
 
+async def check_dns(hostname):
+    """Test DNS resolution time."""
+    start = time.time()
+    try:
+        await asyncio.get_event_loop().getaddrinfo(hostname, 443)
+        dns_time = time.time() - start
+        print(f"DNS resolution took: {dns_time:.2f} seconds")
+        return dns_time
+    except Exception as e:
+        print(f"DNS resolution failed: {e}")
+        return None
+
+async def test_ssl_handshake(hostname):
+    """Test SSL handshake time."""
+    start = time.time()
+    try:
+        ctx = ssl.create_default_context()
+        reader, writer = await asyncio.open_connection(hostname, 443, ssl=ctx)
+        writer.close()
+        await writer.wait_closed()
+        ssl_time = time.time() - start
+        print(f"SSL handshake took: {ssl_time:.2f} seconds")
+        return ssl_time
+    except Exception as e:
+        print(f"SSL handshake failed: {e}")
+        return None
 
 async def test_realtime_api_connection():
     # Retrieve your API key from the environment variables
@@ -36,6 +64,12 @@ async def test_realtime_api_connection():
         else:
             print(f"  {key}: {value}")
 
+    # Create SSL context with optimized settings
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = True
+    ssl_context.verify_mode = ssl.CERT_REQUIRED
+    ssl_context.set_ciphers('ECDHE+AESGCM')
+
     # Attempt to establish the WebSocket connection
     try:
         async with websockets.connect(
@@ -56,4 +90,6 @@ async def test_realtime_api_connection():
 
 
 if __name__ == "__main__":
+    asyncio.run(check_dns("api.openai.com"))
+    asyncio.run(test_ssl_handshake("api.openai.com"))
     asyncio.run(test_realtime_api_connection())
