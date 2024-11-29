@@ -1,8 +1,10 @@
 
 
 
-
-
+Somtimes the DNS resolution might take time so one way to fix this is to change the DNS 
+```sh
+sudo bash -c 'echo "nameserver 1.1.1.1" > /etc/resolv.conf'
+```
 
 # Understanding Sound Cards in Raspberry Pi
 
