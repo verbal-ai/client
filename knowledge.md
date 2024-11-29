@@ -166,3 +166,8 @@ arecord -l
 # List playback devices
 aplay -l
 ```
+
+Tail Logs for Service
+```
+sudo journalctl -u voice_assistant.service -f
+```
