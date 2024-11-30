@@ -99,6 +99,8 @@ class RealtimeAPI:
                 await self.clear_websocket()
                 if self.timeout_callback:
                     await self.timeout_callback()
+        else:
+            self.last_speech_time = time.perf_counter()
 
     async def clear_websocket(self):
         await self.websocket.close()
