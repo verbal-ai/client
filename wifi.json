@@ -2,6 +2,11 @@
   "known_networks": [
     {
       "ssid": "Excitel-5G",
+      "password": "112233445",
+      "security": "wpa2"
+    },
+    {
+      "ssid": "Excitel-5G",
       "password": "11223344",
       "security": "wpa2"
     }

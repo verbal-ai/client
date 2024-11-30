@@ -2,6 +2,7 @@ import json
 import time
 import subprocess
 import os
+import asyncio
 
 # Run the command with sudo
 # sudo apt-get install dhcpcd5
@@ -130,17 +131,26 @@ def cleanup_wifi():
         print(f"Cleanup failed: {e}")
         return False
 
-def connect_wifi():
+def wifi_prerequisites():
     if not check_required_packages():
         return False
         
     if not check_wifi_interface():
         return False
     
+    return True
+
+async def connect_wifi():
+    print("Checking wifi prerequisites")
+    if not wifi_prerequisites():
+        return False
+    
+    print("Loading wifi config")
     wifi_config = load_wifi_config()
     if not wifi_config:
         return False
     
+    print("Cleaning up wireless interfaces")
     # Clean up before starting
     if not cleanup_wifi():
         print("Failed to cleanup wireless interfaces")
@@ -148,9 +158,9 @@ def connect_wifi():
     
     try:
         for net in wifi_config['known_networks']:
-            print(f"\nTrying to connect to {net['ssid']}")
+            print(f"\nTrying to connect to {net['ssid']}   {net['password']}")
             
-            # Create network configuration
+            # Create network configuratio
             network_config = (
                 'ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\n'
                 'update_config=1\n'
@@ -166,42 +176,84 @@ def connect_wifi():
             with open('/etc/wpa_supplicant/wpa_supplicant.conf', 'w') as f:
                 f.write(network_config)
             
-            # Set proper permissions
-            subprocess.run(['sudo', 'chmod', '600', '/etc/wpa_supplicant/wpa_supplicant.conf'])
-            
-            # Start wpa_supplicant with specific socket path
-            subprocess.run([
-                'sudo',
-                'wpa_supplicant',
-                '-B',                    # Run in background
-                '-i', 'wlan0',          # Interface name
-                '-c', '/etc/wpa_supplicant/wpa_supplicant.conf',  # Config file
-                '-P', '/var/run/wpa_supplicant.pid',  # PID file
-                '-D', 'nl80211,wext'    # Driver options
-            ], check=False)
-            
-            # Wait for connection
-            max_wait = 30
-            while max_wait > 0:
-                result = subprocess.run(['iwconfig', 'wlan0'], capture_output=True, text=True)
-                if net['ssid'] in result.stdout and 'ESSID:off/any' not in result.stdout:
-                    print(f"Successfully connected to {net['ssid']}")
-                    
-                    # Get IP address via DHCP
-                    subprocess.run(['sudo', 'dhclient', 'wlan0'], check=False)
-                    return True
-                max_wait -= 1
-                time.sleep(1)
-                print("Waiting for connection...")
+            print("Starting monitor wifi connection")
+            status = await monitor_wifi_connection(timeout=10)
+            if status:
+                print(f"Successfully connected to {net['ssid']}")
+                return True
+            else:
+                print(f"Failed to connect to {net['ssid']}")
                 
     except Exception as e:
         print(f"Connection failed: {e}")
         
     return False
 
-def main():
-    if not connect_wifi():
+
+async def start_wpa_supplicant():
+    try:
+        # Start wpa_supplicant in background
+        process = await asyncio.create_subprocess_exec(
+            'sudo', 'wpa_supplicant',
+            '-B',                    # Run in background
+            '-i', 'wlan0',
+            '-c', '/etc/wpa_supplicant/wpa_supplicant.conf',
+            '-P', '/var/run/wpa_supplicant.pid',
+            '-D', 'nl80211,wext'
+        )
+        
+        # Give it a moment to start
+        await asyncio.sleep(1)
+        
+        # Check if process is running by checking the PID file
+        try:
+            with open('/var/run/wpa_supplicant.pid', 'r') as f:
+                pid = int(f.read().strip())
+                # Check if process exists
+                subprocess.run(['kill', '-0', str(pid)], check=True)
+                print("wpa_supplicant started successfully")
+                return True
+        except:
+            print("wpa_supplicant failed to start properly")
+            return False
+
+    except Exception as e:
+        print(f"Error starting wpa_supplicant: {e}")
+        return False
+
+async def stop_wpa_supplicant():
+    subprocess.run(['sudo', 'killall', 'wpa_supplicant'], check=False)
+    await asyncio.sleep(1)
+    return True
+
+async def monitor_wifi_connection(timeout: int = 45):
+    if not await start_wpa_supplicant():
+        return False
+    
+    # Now monitor the connection status
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            result = subprocess.run(['wpa_cli', 'status'], 
+                                  capture_output=True, 
+                                  text=True, 
+                                  check=False)
+            print(f"wpa_cli status: {result.stdout}")
+            if 'wpa_state=COMPLETED' in result.stdout:
+                print("Successfully connected to WiFi")
+                return True
+            await asyncio.sleep(1)
+        except Exception as e:
+            print(f"Error checking status: {e}")
+    
+    await stop_wpa_supplicant()
+    print("Connection timed out")
+    return False
+
+
+async def main():
+    if not await connect_wifi():
         print("Could not connect to any known networks")
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
