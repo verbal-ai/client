@@ -171,3 +171,14 @@ Tail Logs for Service
 ```
 sudo journalctl -u voice_assistant.service -f
 ```
+
+Setup the DNS to use cloudflare and google DNS.
+
+```sh
+echo "static domain_name_servers=1.1.1.1 8.8.8.8 8.8.4.4" | sudo tee -a /etc/dhcpcd.conf
+```
+
+And after that restarts it
+```sh
+sudo service dhcpcd restart
+```
