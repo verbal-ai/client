@@ -29,10 +29,14 @@ class WakeWordDetector:
         self.wake_word = wake_word.lower()
         self.callback = callback
         self.sample_rate = sample_rate
-        self.chunk_size = 960
         self.is_listening = False
         self.is_paused = False
         self._cancel_event = asyncio.Event()
+
+        self.chunk_size = 1024
+        self.format = pyaudio.paInt16
+        self.channels = 1
+
         
         # Initialize Vosk model once and keep it
         self.model = Model(model_path)
@@ -43,9 +47,15 @@ class WakeWordDetector:
         self.stream = None
         
         # Pre-configure stream parameters
+
+        print("All the parameters:")
+        print(f"format: {self.format}")
+        print(f"channels: {self.channels}")
+        print(f"rate: {self.sample_rate}")
+        print(f"chunk_size: {self.chunk_size}")
         self.stream_config = {
-            'format': pyaudio.paInt16,
-            'channels': 1,
+            'format': self.format,
+            'channels': self.channels,
             'rate': self.sample_rate,
             'input': True,
             'frames_per_buffer': self.chunk_size

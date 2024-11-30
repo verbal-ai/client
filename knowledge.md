@@ -172,13 +172,15 @@ Tail Logs for Service
 sudo journalctl -u voice_assistant.service -f
 ```
 
-Setup the DNS to use cloudflare and google DNS.
+Set up the DNS.
 
 ```sh
-echo "static domain_name_servers=1.1.1.1 8.8.8.8 8.8.4.4" | sudo tee -a /etc/dhcpcd.conf
-```
+# 1. First check if it's a broken symlink
+ls -la /etc/resolv.conf
 
-And after that restarts it
-```sh
-sudo service dhcpcd restart
+# 2. Remove any broken symlink if it exists
+sudo rm -f /etc/resolv.conf
+
+# 3. Create new resolv.conf and make it immutable
+sudo sh -c 'echo "nameserver 1.1.1.1" > /etc/resolv.conf && chattr +i /etc/resolv.conf'
 ```
