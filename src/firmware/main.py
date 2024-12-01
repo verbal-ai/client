@@ -3,11 +3,90 @@ import time
 import subprocess
 import os
 import asyncio
+import string
+import random
 
 # Run the command with sudo
 # sudo apt-get install dhcpcd5
 # sudo systemctl enable dhcpcd
 # sudo systemctl start dhcpcd
+from flask import Flask, render_template, redirect
+app = Flask(__name__, static_url_path='')
+
+currentdir = os.path.dirname(os.path.abspath(__file__))
+os.chdir(currentdir)
+
+ssid_list = []
+def getssid():
+    global ssid_list
+    if len(ssid_list) > 0:
+        return ssid_list
+    ssid_list = []
+    
+    try:
+        # Initiate scan
+        subprocess.run(['sudo', 'wpa_cli', 'scan'], check=True)
+        time.sleep(2)  # Wait for scan to complete
+        
+        # Get scan results
+        scan_results = subprocess.check_output(['sudo', 'wpa_cli', 'scan_results'], 
+                                             text=True)
+        
+        # Parse results
+        for line in scan_results.splitlines()[1:]:  # Skip header line
+            try:
+                # Format: bssid / frequency / signal level / flags / ssid
+                parts = line.split('\t')
+                if len(parts) >= 5:
+                    ssid = parts[4].strip()
+                    if ssid and ssid not in ssid_list:  # Only add non-empty SSIDs
+                        ssid_list.append(ssid)
+            except:
+                continue
+                
+    except subprocess.CalledProcessError as e:
+        print(f"Error scanning networks: {e}")
+        return []
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return []
+        
+    print(f"Found SSIDs: {ssid_list}")
+    ssid_list = sorted(list(set(ssid_list)))
+    return ssid_list
+
+def id_generator(size=6, chars=string.ascii_lowercase + string.digits):
+    return ''.join(random.choice(chars) for _ in range(size))
+
+wpa_conf = """country=IN
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+update_config=1
+network={
+    ssid="%s"
+    %s
+}"""
+
+wpa_conf_default = """country=IN
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+update_config=1
+"""
+
+
+PI_ID_FILE = '/home/dev/pi.id'
+@app.route('/')
+def main():
+    piid = open(PI_ID_FILE, 'r').read().strip()
+    return render_template('index.html', ssids=getssid(), message="Once connected you'll find IP address @ <a href='https://snaptext.live/{}' target='_blank'>snaptext.live/{}</a>.".format(piid,piid))
+
+# Captive portal when connected with iOS or Android
+@app.route('/generate_204')
+def redirect204():
+    return redirect("http://192.168.4.1", code=302)
+
+@app.route('/hotspot-detect.html')
+def applecaptive():
+    return redirect("http://192.168.4.1", code=302)
+
 
 
 def load_wifi_config():
@@ -140,6 +219,44 @@ def wifi_prerequisites():
     
     return True
 
+def setup_ap():
+    # things to run the first time it boots
+    if not os.path.isfile(PI_ID_FILE):
+        with open(PI_ID_FILE, 'w') as f:
+            f.write(id_generator())
+            
+        # Use absolute path and wait for completion
+        setup_script = os.path.join(currentdir, 'turnkey', 'setup_ap.sh')
+        try:
+            # Make script executable
+            subprocess.run(['sudo', 'chmod', '+x', setup_script], check=True)
+            
+            # Run setup script and wait for completion
+            result = subprocess.run(['sudo', setup_script], 
+                                  check=True,
+                                  capture_output=True,
+                                  text=True)
+                                  
+            print(result.stdout)  # Print output for debugging
+            if result.returncode == 0:
+                print("AP setup completed successfully")
+                time.sleep(2)  # Short wait after setup
+                return True
+            else:
+                print(f"AP setup failed: {result.stderr}")
+                return False
+                
+        except subprocess.CalledProcessError as e:
+            print(f"Error running setup script: {e}")
+            return False
+        except Exception as e:
+            print(f"Unexpected error in setup_ap: {e}")
+            return False
+            
+    piid = open(PI_ID_FILE, 'r').read().strip()
+    print(piid)
+    return True
+
 async def connect_wifi():
     print("Checking wifi prerequisites")
     if not wifi_prerequisites():
@@ -250,10 +367,50 @@ async def monitor_wifi_connection(timeout: int = 45):
     print("Connection timed out")
     return False
 
+async def create_ap(enable: bool = True):
+    
+    setup_ap()
+    
+    process = await asyncio.create_subprocess_exec(
+        'sudo', 'sh', '-c', '/home/dev/src/firmware/turnkey/enable_ap.sh ' + ('enable' if enable else 'disable'),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    
+    # Read output streams asynchronously
+    while True:
+        # Read stdout
+        stdout_line = await process.stdout.readline()
+        if stdout_line:
+            line = stdout_line.decode().strip()
+            print(f"AP setup: {line}")
+            if line == ("Access Point " + ("enabled" if enable else "disabled")):
+                print("AP created successfully")
+                return True
+        
+        # Read stderr
+        stderr_line = await process.stderr.readline()
+        if stderr_line:
+            print(f"AP error: {stderr_line.decode().strip()}")
+            
+        # Check if process has finished
+        if process.stdout.at_eof() and process.stderr.at_eof():
+            break
+            
+        await asyncio.sleep(0.1)
+        
+    # Wait for process to complete
+    await process.wait()
+    
+    print("Failed to create AP")
+    return False
+
 
 async def main():
     if not await connect_wifi():
         print("Could not connect to any known networks")
+        if await create_ap(enable=True):
+            app.run(host="0.0.0.0", port=80, threaded=True)
 
 if __name__ == '__main__':
     asyncio.run(main())

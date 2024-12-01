@@ -1,73 +1,117 @@
 #!/bin/bash
 
-# Function to check if a package is installed
-check_package() {
-    if ! dpkg -l | grep -q "^ii  $1 "; then
-        echo "Installing $1..."
-        sudo apt-get update
-        sudo apt-get install -y $1
-        return 0
-    else
-        echo "$1 is already installed"
-        return 1
-    fi
-}
-
-echo "Preparing WiFi interface..."
-# Unblock WiFi if blocked
-sudo rfkill unblock wifi
-sudo rfkill unblock wlan
-
-# Reset wlan0 interface
-sudo ip link set wlan0 down || true
-sudo ip addr flush dev wlan0 || true
-sleep 2
-
-# Check and install required packages
-check_package hostapd
-HOSTAPD_INSTALLED=$?
-
-check_package dnsmasq
-DNSMASQ_INSTALLED=$?
-
-# If we installed any packages, enable the services
-if [ $HOSTAPD_INSTALLED -eq 0 ] || [ $DNSMASQ_INSTALLED -eq 0 ]; then
-    echo "Enabling services..."
-    sudo systemctl unmask hostapd
-    sudo systemctl enable hostapd
-    sudo systemctl enable dnsmasq
+# Check if script is run as root
+if [ "$EUID" -ne 0 ]; then 
+    echo "Please run as root (use sudo)"
+    exit 1
 fi
 
-# Create required directories
-sudo mkdir -p /etc/hostapd
-sudo mkdir -p /etc/default/hostapd
+function enable_ap() {
+    # Stop services initially
+    systemctl stop dnsmasq
+    systemctl stop hostapd
 
-# Stop services
-echo "Stopping services..."
-# sudo systemctl stop wpa_supplicant
-# sudo systemctl stop dhcpcd
-sudo systemctl stop dnsmasq || true
-sudo systemctl stop hostapd || true
+    # Configure static IP
+    cat > /etc/dhcpcd.conf << EOF
+interface wlan0
+    static ip_address=192.168.4.1/24
+    nohook wpa_supplicant
+EOF
 
-# Copy configurations
-echo "Copying configurations..."
-sudo cp ./config/hostapd /etc/default/hostapd
-sudo cp ./config/hostapd.conf /etc/hostapd/hostapd.conf
-# sudo cp ./config/dhcpcd.conf /etc/dhcpcd.conf
-sudo cp ./config/dnsmasq.conf /etc/dnsmasq.conf
+    # Restart dhcpcd
+    service dhcpcd restart
 
-# Set permissions
-sudo chmod 600 /etc/hostapd/hostapd.conf
+    # Kill any existing wpa_supplicant process
+    killall wpa_supplicant 2>/dev/null || true
+    
+    # Unblock wifi if it's blocked
+    rfkill unblock wifi
 
-# Load wan configuration
-# sudo cp wpa.conf /etc/wpa_supplicant/wpa_supplicant.conf
+    # Enable IP forwarding
+    sysctl -w net.ipv4.ip_forward=1
 
-# Start services
-echo "Starting services..."
-# sudo systemctl start dhcpcd
-sudo systemctl start dnsmasq
-sudo systemctl start hostapd
+    # Configure IP masquerading
+    iptables -t nat -F
+    iptables -F
+    iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+    iptables -A FORWARD -i eth0 -o wlan0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+    iptables -A FORWARD -i wlan0 -o eth0 -j ACCEPT
+    netfilter-persistent save
 
-echo "Configuration complete. Rebooting..."
-# sudo reboot now
+    # Enable and start services
+    systemctl unmask hostapd
+    systemctl enable hostapd
+    
+    # Try starting hostapd with debug output
+    echo "Starting hostapd..."
+    if ! systemctl start hostapd; then
+        echo "Failed to start hostapd. Checking logs..."
+        journalctl -xeu hostapd.service
+        hostapd -dd /etc/hostapd/hostapd.conf
+    fi
+    
+    systemctl start dnsmasq
 
+    echo "Access Point enabled"
+    return 0
+}
+
+function disable_ap() {
+    # Stop services
+    systemctl stop hostapd
+    systemctl stop dnsmasq
+
+    # Remove static IP configuration
+    sed -i '/interface wlan0/d' /etc/dhcpcd.conf
+    sed -i '/static ip_address=192.168.4.1\/24/d' /etc/dhcpcd.conf
+    sed -i '/nohook wpa_supplicant/d' /etc/dhcpcd.conf
+
+    # Restart dhcpcd
+    service dhcpcd restart
+
+    # Clear iptables rules
+    iptables -t nat -F
+    iptables -F
+    netfilter-persistent save
+
+    echo "Access Point disabled"
+    return 0
+}
+
+# Configure hostapd
+cat > /etc/hostapd/hostapd.conf << EOF
+country_code=US
+interface=wlan0
+driver=nl80211
+ssid=RaspberryAP
+hw_mode=g
+channel=7
+wmm_enabled=0
+macaddr_acl=0
+auth_algs=1
+ignore_broadcast_ssid=0
+wpa=2
+wpa_passphrase=raspberry
+wpa_key_mgmt=WPA-PSK
+wpa_pairwise=TKIP
+rsn_pairwise=CCMP
+EOF
+
+# Make sure the configuration is readable
+chmod 600 /etc/hostapd/hostapd.conf
+
+# Check command line argument
+case "$1" in
+    "enable")
+        enable_ap
+        exit $?
+        ;;
+    "disable")
+        disable_ap
+        exit $?
+        ;;
+    *)
+        echo "Usage: $0 {enable|disable}"
+        exit 1
+        ;;
+esac
