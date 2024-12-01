@@ -1,11 +1,11 @@
 # Stop the service
-sudo systemctl stop wifi_manager
+sudo systemctl stop turnkey
 
 # Disable the service from starting at boot
-sudo systemctl disable wifi_manager
+sudo systemctl disable turnkey
 
 # Remove the service file
-sudo rm /etc/systemd/system/wifi_manager.service
+sudo rm /etc/systemd/system/turnkey.service
 
 # Reload systemd to recognize the changes
 sudo systemctl daemon-reload
