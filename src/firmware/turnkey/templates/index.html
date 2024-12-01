@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="en">
   <head>
@@ -42,6 +41,15 @@
       <div class="form-label-group">
         <input id="inputPassword" autocorrect="off" autocapitalize="none" pattern=".{0}|.{8,}" name="password" class="form-control" placeholder="SSID Password" required>
         <label for="inputPassword">Password</label>
+      </div>
+
+      <div class="form-group">
+        <label for="inputKeyMgmt">Security Type</label>
+        <select class="form-control" id="inputKeyMgmt" name="key_mgmt">
+            <option value="WPA-PSK" selected>WPA-PSK (Default)</option>
+            <option value="WPA-EAP">WPA-EAP</option>
+            <option value="NONE">Open Network</option>
+        </select>
       </div>
 
       <button class="btn btn-lg btn-primary btn-block" type="submit">Sign in</button>
