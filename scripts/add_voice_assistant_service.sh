@@ -1,5 +1,5 @@
 # Copy service file to systemd
-sudo cp src/firmware/voice_assistant.service /etc/systemd/system/
+sudo cp services/voice_assistant/voice_assistant.service /etc/systemd/system/
 
 # Reload systemd
 sudo systemctl daemon-reload
