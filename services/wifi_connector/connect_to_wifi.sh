@@ -24,7 +24,7 @@ while true; do
         ip link set $INTERFACE up
         
         # Start wpa_supplicant using existing configuration
-        wpa_supplicant -B -i $INTERFACE -c /etc/wpa_supplicant/wpa_supplicant.conf
+        wpa_supplicant -B -i $INTERFACE -c /etc/wpa_supplicant/wpa_supplicant.conf -P /var/run/wpa_supplicant.pid -D nl80211,wext
         
         # Get IP using DHCP
         dhclient $INTERFACE
