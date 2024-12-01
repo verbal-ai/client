@@ -1,0 +1,13 @@
+[Unit]
+Description=WiFi Auto-Reconnect Service
+After=network.target wpa_supplicant.service
+Wants=wpa_supplicant.service
+
+[Service]
+Type=simple
+ExecStart=/home/dev/services/wifi_connector/connect_to_wifi.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
