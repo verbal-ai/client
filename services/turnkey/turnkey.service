@@ -1,6 +1,6 @@
 [Unit]
 Description=Turnkey Wifi Manager for hotspot
-After=network.target wpa_supplicant.service dhcpcd.service
+After=network.target wpa_supplicant.service dhcpcd.service wifi_connector.service
 Wants=wpa_supplicant.service dhcpcd.service
 
 [Service]
