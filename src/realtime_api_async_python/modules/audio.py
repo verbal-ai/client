@@ -24,7 +24,7 @@ async def play_audio(audio_data, device_index=None, volume_multiplier=4.0):
         stream = p.open(
             format=FORMAT,
             channels=CHANNELS,
-            rate=RATE,
+            rate=24000,
             output=True,
             output_device_index=0  # 3.5mm jack
         )
