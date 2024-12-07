@@ -184,3 +184,10 @@ sudo rm -f /etc/resolv.conf
 # 3. Create new resolv.conf and make it immutable
 sudo sh -c 'echo "nameserver 1.1.1.1" > /etc/resolv.conf && chattr +i /etc/resolv.conf'
 ```
+
+Checking all the details about the hardware 
+
+```sh
+cat /proc/asound/card*/stream*
+
+```
