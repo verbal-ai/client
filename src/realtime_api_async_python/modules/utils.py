@@ -17,7 +17,7 @@ RUN_TIME_TABLE_LOG_JSON = "runtime_time_table.jsonl"
 CHUNK = 1024
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
-RATE = 16000
+RATE = 48000
 
 
 class ModelName(str, Enum):
