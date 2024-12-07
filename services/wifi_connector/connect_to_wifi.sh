@@ -2,6 +2,15 @@
 
 INTERFACE="wlan0"
 
+unblock_wifi() {
+    echo "Checking RF-kill status..."
+    if rfkill list wifi | grep -q "blocked: yes"; then
+        echo "WiFi is blocked by RF-kill, attempting to unblock..."
+        rfkill unblock wifi
+        sleep 2
+    fi
+}
+
 stop_wpa_supplicant() {
     # Find and kill wpa_supplicant processes specifically for wlan0
     pid=$(pgrep -f "wpa_supplicant.*$INTERFACE")
@@ -13,6 +22,8 @@ stop_wpa_supplicant() {
 }
 
 while true; do
+
+    unblock_wifi
     # Check if we're already connected
     if ! iw dev $INTERFACE link | grep -q "Connected"; then
         echo "Not connected. Attempting to connect..."
@@ -28,7 +39,20 @@ while true; do
         
         # Get IP using DHCP
         dhclient $INTERFACE
+    else
+        # Print network details when connected
+        echo "Connected to WiFi. Network details:"
+        echo "=================================="
+        echo "Connection Info:"
+        iw dev $INTERFACE link
+        echo "IP Configuration:"
+        ip addr show $INTERFACE
+        echo "Signal Strength:"
+        iwconfig $INTERFACE | grep -i "signal"
+        echo "Route Information:"
+        ip route | grep $INTERFACE
+        echo "=================================="
     fi
     
-    sleep 5  # Wait for 5 seconds before next check
+    sleep 10  # Wait for 10 seconds before next check
 done
