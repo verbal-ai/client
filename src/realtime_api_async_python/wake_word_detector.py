@@ -12,7 +12,7 @@ class WakeWordDetector:
         model_path: str = os.getenv("VOSK_MODEL_PATH", "data/vosk-model-small-en-us-0.15"),
         wake_word: str = "hey",
         callback: Optional[Callable] = None,
-        sample_rate: int = 16000
+        sample_rate: int = 48000
     ):
         """Initialize wake word detector with Vosk model.
         
