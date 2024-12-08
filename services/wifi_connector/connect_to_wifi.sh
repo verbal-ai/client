@@ -2,6 +2,14 @@
 
 INTERFACE="wlan0"
 
+check_ap_active() {
+    # Check if hostapd is running (indicating AP is active)
+    if systemctl is-active --quiet hostapd; then
+        return 0  # AP is active
+    fi
+    return 1  # AP is not active
+}
+
 unblock_wifi() {
     echo "Checking RF-kill status..."
     if rfkill list wifi | grep -q "blocked: yes"; then
@@ -22,6 +30,12 @@ stop_wpa_supplicant() {
 }
 
 while true; do
+    # First check if AP is active
+    if check_ap_active; then
+        echo "Access Point is active, skipping WiFi connection..."
+        sleep 10
+        continue
+    fi
 
     unblock_wifi
     # Check if we're already connected
