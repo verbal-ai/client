@@ -84,6 +84,9 @@ class WakeWordDetector:
                     self.stream = self.audio.open(**self.stream_config)
                 log_info("✨ Started wake word detection", style="bold green")
             
+            # Add a short delay to ensure the stream is ready
+            await asyncio.sleep(0.5)
+            
             self.is_listening = True
             self.is_paused = False
             
