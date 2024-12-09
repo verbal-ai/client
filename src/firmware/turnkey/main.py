@@ -30,6 +30,20 @@ def getssid():
     ssid_list = []
     
     try:
+        subprocess.run(['sudo', 'killall', 'wpa_supplicant'], check=False)  # Clean up any existing instances
+        time.sleep(1)
+
+        # Start wpa_supplicant with explicit control interface
+        subprocess.run([
+            'sudo', 'wpa_supplicant',
+            '-B',                    # Run in background
+            '-i', 'wlan0',          # Interface name
+            '-c', '/etc/wpa_supplicant/wpa_supplicant.conf',
+            '-D', 'nl80211,wext',
+            '-P', '/var/run/wpa_supplicant.pid'
+        ], check=True)
+        
+        time.sleep(2)  # Give it time to initialize
         # Initiate scan
         subprocess.run(['sudo', 'wpa_cli', 'scan'], check=True)
         time.sleep(2)  # Wait for scan to complete
@@ -39,6 +53,7 @@ def getssid():
                                              text=True)
         
         # Parse results
+        print(scan_results)
         for line in scan_results.splitlines()[1:]:  # Skip header line
             try:
                 # Format: bssid / frequency / signal level / flags / ssid
@@ -79,8 +94,12 @@ def redirect204():
 def applecaptive():
     return redirect("http://192.168.4.1", code=302)
 
+@app.route('/restart', methods=['POST', 'GET'])
+def restart():
+    raise Exception("Not implemented")
+
 @app.route('/signin', methods=['POST'])
-def signin(request):
+def signin():
     try: 
         print ("In the signing post")
         email = request.form['email'] 

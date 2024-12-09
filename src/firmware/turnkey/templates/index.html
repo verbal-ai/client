@@ -18,9 +18,7 @@
   <body>
     <form class="form-signin" action="/signin" method="POST">
       <div class="text-center mb-4">
-<!--         <img class="mb-4" src="https://getbootstrap.com/assets/brand/bootstrap-solid.svg" alt="" width="72" height="72">
- -->
-       <h1 class="h3 mb-3 font-weight-normal">Sign in</h1>
+        <h1 class="h3 mb-3 font-weight-normal">Sign in</h1>
         {% if message %}<p>{{ message|safe }}</p>{% endif %}
       </div>
 
@@ -31,11 +29,17 @@
 
       <div class="form-group">
         <label for="inputSSID">SSID</label>
+        {% if ssids %}
         <select class="form-control" id="inputSSID" name="ssid">
           {% for s in ssids %}
           <option>{{ s }}</option>
           {% endfor %}
+          <option value="manual">Enter manually...</option>
         </select>
+        <input type="text" class="form-control mt-2" id="manualSSID" name="manual_ssid" style="display: none;" placeholder="Enter SSID manually">
+        {% else %}
+        <input type="text" class="form-control" id="manualSSID" name="ssid" placeholder="Enter SSID manually" required>
+        {% endif %}
       </div>
 
       <div class="form-label-group">
@@ -52,7 +56,63 @@
         </select>
       </div>
 
+      <div class="message"></div>
+
       <button class="btn btn-lg btn-primary btn-block" type="submit">Sign in</button>
       <p class="mt-5 mb-3 text-muted text-center"><a href="https://github.com/schollz/raspberry-pi-turnkey">Raspberry Pi Turnkey</a></p>
     </form>
+
+    <script>
+      document.getElementById('inputSSID').addEventListener('change', function() {
+        var manualInput = document.getElementById('manualSSID');
+        if (this.value === 'manual') {
+          manualInput.style.display = 'block';
+          manualInput.required = true;
+          this.name = ''; // Remove the name attribute from select
+        } else {
+          manualInput.style.display = 'none';
+          manualInput.required = false;
+          this.name = 'ssid'; // Restore the name attribute to select
+        }
+      });
+
+      document.querySelector('.form-signin').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        try {
+            // Submit the form data
+            const response = await fetch('/signin', {
+                method: 'POST',
+                body: new FormData(this)
+            });
+            
+            const result = await response.text();
+            
+            // Show the result message
+            const messageElement = document.querySelector('.message') || document.createElement('div');
+            messageElement.textContent = result + " Rebooting in 3 seconds...";
+            
+            // Wait 3 seconds then reboot
+            setTimeout(async () => {
+                try {
+                    messageElement.textContent = "Rebooting now...";
+                    const rebootResponse = await fetch('/reboot', {
+                        method: 'POST',  // Explicitly set POST method
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    console.log('Reboot initiated');
+                } catch (error) {
+                    // The error is expected as the device reboots
+                    console.log('Reboot in progress');
+                }
+            }, 3000);
+            
+        } catch (error) {
+            console.error('Error:', error);
+        }
+      });
+    </script>
   </body>
+</html>

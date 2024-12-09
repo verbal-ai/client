@@ -191,3 +191,13 @@ Checking all the details about the hardware
 cat /proc/asound/card*/stream*
 
 ```
+
+For AP Logs
+```sh
+sudo journalctl -u hostapd -f
+```
+
+For connecting to WIFI
+WPA_Supplicant is used. It's a client side CLI.
+
+
