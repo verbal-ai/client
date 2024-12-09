@@ -5,6 +5,8 @@ from vosk import Model, KaldiRecognizer
 import pyaudio
 from typing import Optional, Callable
 from realtime_api_async_python.modules.logging import log_info, log_error, log_warning
+import sounddevice as sd
+import numpy as np
 
 class WakeWordDetector:
     def __init__(
@@ -61,6 +63,36 @@ class WakeWordDetector:
             'frames_per_buffer': self.chunk_size
         }
 
+        # Add sound parameters
+        self.wake_sound = self.generate_wake_sound()
+        self.sleep_sound = self.generate_sleep_sound()
+
+    def generate_wake_sound(self):
+        """Generate a pleasant ascending tone"""
+        duration = 0.2  # seconds
+        t = np.linspace(0, duration, int(44100 * duration), False)
+        # Generate ascending frequency from 440Hz to 880Hz
+        frequency = np.linspace(440, 880, len(t))
+        tone = 0.5 * np.sin(2 * np.pi * frequency * t)
+        return tone
+
+    def generate_sleep_sound(self):
+        """Generate a pleasant descending tone"""
+        duration = 0.2  # seconds
+        t = np.linspace(0, duration, int(44100 * duration), False)
+        # Generate descending frequency from 880Hz to 440Hz
+        frequency = np.linspace(880, 440, len(t))
+        tone = 0.5 * np.sin(2 * np.pi * frequency * t)
+        return tone
+
+    async def play_sound(self, sound_data):
+        """Play a sound asynchronously"""
+        try:
+            sd.play(sound_data, 44100)
+            sd.wait()
+        except Exception as e:
+            log_error(f"Error playing sound: {e}")
+
     async def start_listening(self):
         """Start or resume listening for wake word asynchronously."""
         if self.is_listening:
@@ -87,6 +119,10 @@ class WakeWordDetector:
             # Add a short delay to ensure the stream is ready
             await asyncio.sleep(0.5)
             
+            # Play sleep sound when starting to listen
+            await self.play_sound(self.sleep_sound)
+            log_info("✨ Started wake word detection", style="bold green")
+            
             self.is_listening = True
             self.is_paused = False
             
@@ -97,6 +133,8 @@ class WakeWordDetector:
                     text = result.get("text", "").lower()
                     words = text.split()
                     if any(word == self.wake_word for word in words):
+                        # Play wake sound when wake word is detected
+                        await self.play_sound(self.wake_sound)
                         log_info(f"🎯 Wake word detected in: '{text}'", style="bold blue")
                         if self.callback and asyncio.iscoroutinefunction(self.callback):
                             await self.callback()
