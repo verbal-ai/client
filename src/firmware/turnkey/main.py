@@ -6,10 +6,6 @@ import asyncio
 import string
 import random
 
-# Run the command with sudo
-# sudo apt-get install dhcpcd5
-# sudo systemctl enable dhcpcd
-# sudo systemctl start dhcpcd
 from flask import Flask, render_template, redirect, request
 
 # Use absolute paths
@@ -30,19 +26,6 @@ def getssid():
     ssid_list = []
     
     try:
-        subprocess.run(['sudo', 'killall', 'wpa_supplicant'], check=False)  # Clean up any existing instances
-        time.sleep(1)
-
-        # Start wpa_supplicant with explicit control interface
-        subprocess.run([
-            'sudo', 'wpa_supplicant',
-            '-B',                    # Run in background
-            '-i', 'wlan0',          # Interface name
-            '-c', '/etc/wpa_supplicant/wpa_supplicant.conf',
-            '-D', 'nl80211,wext',
-            '-P', '/var/run/wpa_supplicant.pid'
-        ], check=True)
-        
         time.sleep(2)  # Give it time to initialize
         # Initiate scan
         subprocess.run(['sudo', 'wpa_cli', 'scan'], check=True)
@@ -300,53 +283,53 @@ def setup_ap():
     print(piid)
     return True
 
-async def start_wpa_supplicant():
-    try:
-        # Check if wpa_supplicant is already running
-        try:
-            with open('/var/run/wpa_supplicant.pid', 'r') as f:
-                pid = int(f.read().strip())
-                # Check if process exists
-                subprocess.run(['kill', '-0', str(pid)], check=True)
-                print("wpa_supplicant already running")
-                return True
-        except:
-            # Not running, so start it
-            process = await asyncio.create_subprocess_exec(
-                'sudo', 'wpa_supplicant',
-                '-B',                    # Run in background
-                '-i', 'wlan0',
-                '-c', '/etc/wpa_supplicant/wpa_supplicant.conf',
-                '-P', '/var/run/wpa_supplicant.pid',
-                '-D', 'nl80211,wext'
-            )
+# async def start_wpa_supplicant():
+#     try:
+#         # Check if wpa_supplicant is already running
+#         try:
+#             with open('/var/run/wpa_supplicant.pid', 'r') as f:
+#                 pid = int(f.read().strip())
+#                 # Check if process exists
+#                 subprocess.run(['kill', '-0', str(pid)], check=True)
+#                 print("wpa_supplicant already running")
+#                 return True
+#         except:
+#             # Not running, so start it
+#             process = await asyncio.create_subprocess_exec(
+#                 'sudo', 'wpa_supplicant',
+#                 '-B',                    # Run in background
+#                 '-i', 'wlan0',
+#                 '-c', '/etc/wpa_supplicant/wpa_supplicant.conf',
+#                 '-P', '/var/run/wpa_supplicant.pid',
+#                 '-D', 'nl80211,wext'
+#             )
             
-            # Give it a moment to start
-            await asyncio.sleep(1)
+#             # Give it a moment to start
+#             await asyncio.sleep(1)
             
-            # Verify it started successfully
-            try:
-                with open('/var/run/wpa_supplicant.pid', 'r') as f:
-                    pid = int(f.read().strip())
-                    subprocess.run(['kill', '-0', str(pid)], check=True)
-                    print("wpa_supplicant started successfully")
-                    return True
-            except:
-                print("wpa_supplicant failed to start properly")
-                return False
+#             # Verify it started successfully
+#             try:
+#                 with open('/var/run/wpa_supplicant.pid', 'r') as f:
+#                     pid = int(f.read().strip())
+#                     subprocess.run(['kill', '-0', str(pid)], check=True)
+#                     print("wpa_supplicant started successfully")
+#                     return True
+#             except:
+#                 print("wpa_supplicant failed to start properly")
+#                 return False
 
-    except Exception as e:
-        print(f"Error with wpa_supplicant: {e}")
-        return False
+#     except Exception as e:
+#         print(f"Error with wpa_supplicant: {e}")
+#         return False
 
-async def stop_wpa_supplicant():
-    subprocess.run(['sudo', 'killall', 'wpa_supplicant'], check=False)
-    await asyncio.sleep(1)
-    return True
+# async def stop_wpa_supplicant():
+#     subprocess.run(['sudo', 'killall', 'wpa_supplicant'], check=False)
+#     await asyncio.sleep(1)
+#     return True
 
 async def monitor_wifi_connection(timeout: int = 45):
-    if not await start_wpa_supplicant():
-        return False
+    # if not await start_wpa_supplicant():
+    #     return False
     
     # Now monitor the connection status
     start_time = time.time()
@@ -363,8 +346,9 @@ async def monitor_wifi_connection(timeout: int = 45):
             await asyncio.sleep(1)
         except Exception as e:
             print(f"Error checking status: {e}")
+            return False
     
-    await stop_wpa_supplicant()
+    # await stop_wpa_supplicant()
     print("Connection timed out")
     return False
 
@@ -413,6 +397,7 @@ async def main():
         print("Could not connect to any known networks")
         if await create_ap(enable=True):
             app.run(host="0.0.0.0", port=80, threaded=True)
-
+    else:
+        print("Connected to WiFi, no need to start AP")
 if __name__ == '__main__':
     asyncio.run(main())
