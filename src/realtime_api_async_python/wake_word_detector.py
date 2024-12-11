@@ -8,6 +8,15 @@ from realtime_api_async_python.modules.logging import log_info, log_error, log_w
 import sounddevice as sd
 import numpy as np
 
+os.environ['NOAUDIT'] = '1'
+# Disable unnecessary audio system checks
+os.environ['NOAUDIT'] = '1'  # Disable JACK
+os.environ['AUDIODEV'] = 'null'  # Disable OSS
+os.environ['PULSE_SERVER'] = 'none'  # Disable PulseAudio checks
+os.environ['SDL_AUDIODRIVER'] = 'alsa'  # Force ALSA for SDL
+os.environ['ALSA_CARD'] = 'Generic'  # Use generic ALSA device
+
+
 class WakeWordDetector:
     def __init__(
         self,
