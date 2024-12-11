@@ -3,7 +3,16 @@ import queue
 import logging
 import numpy as np
 from scipy import signal
+import os
 from .utils import FORMAT, CHANNELS, RATE, CHUNK
+
+os.environ['NOAUDIT'] = '1'
+# Disable unnecessary audio system checks
+os.environ['NOAUDIT'] = '1'  # Disable JACK
+os.environ['AUDIODEV'] = 'null'  # Disable OSS
+os.environ['PULSE_SERVER'] = 'none'  # Disable PulseAudio checks
+os.environ['SDL_AUDIODRIVER'] = 'alsa'  # Force ALSA for SDL
+os.environ['ALSA_CARD'] = 'Generic'  # Use generic ALSA device
 
 class AsyncMicrophone:
     def __init__(self):
