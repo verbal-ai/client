@@ -44,7 +44,7 @@ class WakeWordDetector:
         self.is_paused = False
         self._cancel_event = asyncio.Event()
 
-        self.chunk_size = 2048
+        self.chunk_size = 4096
         self.format = pyaudio.paInt16
         self.channels = 1
 
