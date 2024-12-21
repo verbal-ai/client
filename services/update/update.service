@@ -1,0 +1,18 @@
+[Unit]
+Description=Client Update Service
+After=network.target
+
+[Service]
+Type=simple
+Environment=VIRTUAL_ENV=/home/dev/client/venv
+Environment=PATH=/home/dev/client/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
+ExecStart=/bin/bash -c 'source /home/dev/client/venv/bin/activate; python3 /home/dev/client/src/firmware/update/main.py'
+WorkingDirectory=/home/dev/client
+StandardOutput=inherit
+StandardError=inherit
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

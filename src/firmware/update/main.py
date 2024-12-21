@@ -101,16 +101,15 @@ class LightGitUpdateService:
 
             # Update pip requirements if needed
             self.update_requirements()
-            
-            # Restart the service
-            self.restart_service()
-            
-            # Update the current commit hash and save it
+                            
+            # Update the current commit hash
             self.current_commit = self.get_remote_commit()
-            self.save_commit(self.current_commit)
             
             logger.info(f"Update successful at {datetime.now()}")
             logger.debug(f"Rsync output: {rsync_result.stdout}")
+
+            self.run_update_script()
+
             return True
         except Exception as e:
             logger.error(f"Update failed: {e}")
@@ -131,14 +130,36 @@ class LightGitUpdateService:
             except subprocess.CalledProcessError as e:
                 logger.error(f"Failed to update requirements: {e}")
 
-    def restart_service(self):
-        """Restart the main service"""
-        service_name = "your_service_name"  # Replace with your service name
+    def run_update_script(self):
+        """Run the on_update.sh script with sudo privileges"""
+        update_script = os.path.join(self.repo_path, 'src/firmware/update/on_update.sh')
+        
         try:
-            subprocess.run(['sudo', 'systemctl', 'restart', service_name], check=True)
-            logger.info(f"Service {service_name} restarted successfully")
+            if os.path.exists(update_script):
+                # Make sure the script is executable
+                subprocess.run(['sudo', 'chmod', '+x', update_script], check=True)
+                
+                # Run the update script
+                result = subprocess.run(
+                    ['sudo', update_script],
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+                logger.info("Update script executed successfully")
+                if result.stdout:
+                    logger.debug(f"Update script output: {result.stdout}")
+            else:
+                logger.error(f"Update script not found at {update_script}")
+                return False
+            return True
         except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to restart service: {e}")
+            logger.error(f"Failed to run update script: {e}")
+            if e.stdout:
+                logger.error(f"Script stdout: {e.stdout}")
+            if e.stderr:
+                logger.error(f"Script stderr: {e.stderr}")
+            return False
 
 def main():
     REPO_URL = "https://github.com/verbal-ai/client"  # Replace with your repo URL
