@@ -1,5 +1,6 @@
 # Copy service file to systemd
-sudo cp services/wifi_connector/wifi_connector.service /etc/systemd/system/
+BASE=/home/dev/client
+sudo cp ${BASE}/services/wifi_connector/wifi_connector.service /etc/systemd/system/
 
 sudo systemctl unmask wifi_connector
 # Reload systemd

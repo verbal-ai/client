@@ -1,5 +1,6 @@
 # Copy service file to systemd
-sudo cp services/update/update.service /etc/systemd/system/
+BASE=/home/dev/client
+sudo cp ${BASE}/services/update/update.service /etc/systemd/system/
 
 # Reload systemd
 sudo systemctl daemon-reload

@@ -252,7 +252,7 @@ if __name__ == "__main__":
         # alert user on snaptext
         r = requests.post("https://snaptext.live",data=json.dumps({"message":"Your Pi is online at {}".format(ipaddress),"to":piid,"from":"Raspberry Pi Turnkey"}))
         print(r.json())
-        subprocess.Popen("/home/dev/src/firmware/turnkey/startup.sh")
+        subprocess.Popen("/home/dev/client/src/firmware/turnkey/startup.sh")
         while True:
             time.sleep(60000)
     else:

@@ -9,7 +9,7 @@ def deploy_to_pi():
     # Configuration
     PI_HOST = "pi.local"
     PI_USER = "dev"
-    REMOTE_DIR = "~/"
+    REMOTE_DIR = "~/client"
     
     try:
         # Use rsync to copy files

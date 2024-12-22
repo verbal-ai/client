@@ -5,7 +5,7 @@ Wants=wpa_supplicant.service
 
 [Service]
 Type=simple
-ExecStart=/home/dev/services/wifi_connector/connect_to_wifi.sh
+ExecStart=/home/dev/client/services/wifi_connector/connect_to_wifi.sh
 Restart=always
 RestartSec=10
 

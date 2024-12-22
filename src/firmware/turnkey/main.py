@@ -9,7 +9,7 @@ import random
 from flask import Flask, render_template, redirect, request
 
 # Use absolute paths
-BASE_DIR = '/home/dev/src/firmware/turnkey'
+BASE_DIR = '/home/dev/client/src/firmware/turnkey'
 template_dir = os.path.join(BASE_DIR, 'templates')
 static_dir = os.path.join(BASE_DIR, 'static')
 
@@ -19,42 +19,79 @@ app = Flask(__name__,
             template_folder=template_dir)
 
 ssid_list = []
+
+def check_wpa_supplicant():
+    try:
+        # Check if wpa_supplicant is running
+        result = subprocess.run(['pgrep', 'wpa_supplicant'], capture_output=True, text=True)
+        return result.returncode == 0
+    except Exception:
+        return False
+
 def getssid():
     global ssid_list
     if len(ssid_list) > 0:
         return ssid_list
     ssid_list = []
     
-    try:
-        time.sleep(2)  # Give it time to initialize
-        # Initiate scan
-        subprocess.run(['sudo', 'wpa_cli', 'scan'], check=True)
-        time.sleep(2)  # Wait for scan to complete
-        
-        # Get scan results
-        scan_results = subprocess.check_output(['sudo', 'wpa_cli', 'scan_results'], 
-                                             text=True)
-        
-        # Parse results
-        print(scan_results)
-        for line in scan_results.splitlines()[1:]:  # Skip header line
-            try:
-                # Format: bssid / frequency / signal level / flags / ssid
-                parts = line.split('\t')
-                if len(parts) >= 5:
-                    ssid = parts[4].strip()
-                    if ssid and ssid not in ssid_list:  # Only add non-empty SSIDs
-                        ssid_list.append(ssid)
-            except:
+    max_retries = 3
+    retry_delay = 3  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            # First check if wpa_supplicant is running
+            if not check_wpa_supplicant():
+                print("wpa_supplicant is not running, waiting...")
+                time.sleep(retry_delay)
                 continue
                 
-    except subprocess.CalledProcessError as e:
-        print(f"Error scanning networks: {e}")
-        return []
-    except Exception as e:
-        print(f"Unexpected error: {e}")
-        return []
-        
+            # Give more time for initialization
+            time.sleep(4)  # Increased from 2 to 4 seconds
+            
+            # Initiate scan with error checking
+            scan_result = subprocess.run(['sudo', 'wpa_cli', 'scan'], 
+                                      capture_output=True, 
+                                      text=True,
+                                      check=True)
+            
+            if "FAIL" in scan_result.stdout or scan_result.returncode != 0:
+                print(f"Scan failed on attempt {attempt + 1}, retrying...")
+                time.sleep(retry_delay)
+                continue
+                
+            # Wait longer for scan to complete
+            time.sleep(4)  # Increased from 2 to 4 seconds
+            
+            # Get scan results with error checking
+            scan_results = subprocess.check_output(['sudo', 'wpa_cli', 'scan_results'], 
+                                                text=True)
+            
+            # Parse results
+            print(f"Scan results: {scan_results}")
+            for line in scan_results.splitlines()[1:]:  # Skip header line
+                try:
+                    # Format: bssid / frequency / signal level / flags / ssid
+                    parts = line.split('\t')
+                    if len(parts) >= 5:
+                        ssid = parts[4].strip()
+                        if ssid and ssid not in ssid_list:  # Only add non-empty SSIDs
+                            ssid_list.append(ssid)
+                except Exception as e:
+                    print(f"Error parsing SSID: {e}")
+                    continue
+            
+            if ssid_list:  # If we successfully got SSIDs, break the retry loop
+                break
+                
+        except subprocess.CalledProcessError as e:
+            print(f"Command failed on attempt {attempt + 1}: {e}")
+            if attempt < max_retries - 1:  # Don't sleep on the last attempt
+                time.sleep(retry_delay)
+        except Exception as e:
+            print(f"Unexpected error on attempt {attempt + 1}: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+    
     print(f"Found SSIDs: {ssid_list}")
     ssid_list = sorted(list(set(ssid_list)))
     return ssid_list
@@ -357,7 +394,7 @@ async def create_ap(enable: bool = True):
     setup_ap()
     
     process = await asyncio.create_subprocess_exec(
-        'sudo', 'sh', '-c', '/home/dev/src/firmware/turnkey/enable_ap.sh ' + ('enable' if enable else 'disable'),
+        'sudo', 'sh', '-c', '/home/dev/client/src/firmware/turnkey/enable_ap.sh ' + ('enable' if enable else 'disable'),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE
     )
