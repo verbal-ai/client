@@ -1,4 +1,4 @@
-# Firmware for running OpenAI real-time APIs on Raspberry Pi devices.
+# Firmware for running OpenAI real-time on Raspberry Pi devices.
 
 
 ## About
