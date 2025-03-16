@@ -1,4 +1,4 @@
-# Firmware For Running Open AI Real Time APIS on the Raspberry PI devices.
+# Firmware for running OpenAI real-time APIs on Raspberry Pi devices.
 
 
 ## About
@@ -6,7 +6,7 @@
 ## Architecture
 
 
-Steps to setup Open AI Real Time APIs on Raspberry Devices.
+## Steps
 
 1. Clone this Repo on your Raspberry Pi device.  
 2. do `pip install` by creating a virtual environment.  
